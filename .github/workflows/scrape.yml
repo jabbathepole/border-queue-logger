@@ -1,5 +1,6 @@
 name: Scrape Border Queues
 
+# Scheduled scraper for PL-UA border queue data (granica.gov.pl SOAP API)
 on:
   schedule:
     - cron: '0 */3 * * *'   # every 3 hours
