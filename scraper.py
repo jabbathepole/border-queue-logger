@@ -6,6 +6,7 @@ Run directly (python scraper.py) or via GitHub Actions.
 import datetime
 import logging
 import sys
+import time
 
 from zeep import Client
 from zeep.exceptions import Fault, TransportError
@@ -25,6 +26,11 @@ log = logging.getLogger(__name__)
 
 WSDL = "https://granica.gov.pl/Services/czasyService/granica.wsdl"
 DB_PATH = "data/queues.db"
+
+# granica.gov.pl is a government site prone to transient 503s. Retry the WSDL
+# load a few times with exponential backoff before giving up and firing an issue.
+WSDL_MAX_ATTEMPTS = 4
+WSDL_BACKOFF_SECONDS = 15
 
 # ASCII crossing IDs expected by the SOAP service (no Polish diacritics).
 # Polish originals: Dorohusk, Zosin, Dołhobyczów, Hrebenne, Budomierz,
@@ -111,14 +117,37 @@ def scrape_all(client: Client, now: datetime.datetime) -> list[dict]:
     return records
 
 
+def load_client() -> Client:
+    """Load the SOAP client, retrying transient failures with backoff."""
+    for attempt in range(1, WSDL_MAX_ATTEMPTS + 1):
+        try:
+            return Client(WSDL)
+        except Exception as exc:
+            if attempt == WSDL_MAX_ATTEMPTS:
+                log.error(
+                    "Failed to load WSDL after %d attempts: %s",
+                    WSDL_MAX_ATTEMPTS,
+                    exc,
+                )
+                raise
+            wait = WSDL_BACKOFF_SECONDS * attempt
+            log.warning(
+                "WSDL load attempt %d/%d failed (%s) — retrying in %ds",
+                attempt,
+                WSDL_MAX_ATTEMPTS,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
+
+
 def main() -> None:
     now_utc = datetime.datetime.now(datetime.timezone.utc).replace(second=0, microsecond=0, tzinfo=None)
     log.info("=== Scrape run starting %s UTC ===", now_utc.isoformat())
 
     try:
-        client = Client(WSDL)
-    except Exception as exc:
-        log.error("Failed to load WSDL: %s", exc)
+        client = load_client()
+    except Exception:
         sys.exit(1)
 
     init_db(DB_PATH)
