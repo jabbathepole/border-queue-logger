@@ -199,6 +199,19 @@ finding."** Report the correlation value, never just the best lag.
 
 ---
 
+## Known data-quality incidents
+
+See [`INCIDENTS.md`](../INCIDENTS.md) for the audited log.
+
+- **INC-001 — granica `'rok'` SOAP error (2026-06-12):** a pre-deployment bug
+  that failed the very first scrape attempt (`2026-06-12T05:37:00Z`). The
+  validator aborted the insert, so **no row was written** — the dataset cleanly
+  **starts** at the first successful run `2026-06-12T06:40:00Z`. **No gap and no
+  bad data in the series; no analysis exclusion required.**
+- **INC-002 — irregular scrape cadence (early window):** GitHub Actions
+  schedule unreliability left fewer scrapes than the nominal 3 h cron implies.
+  Not corruption — handled by `complete=0` exclusion and `--min-buckets`.
+
 ## Data-sufficiency status (as of 2026-06-15)
 
 The eCherga logger went live **2026-06-15** and currently holds **one snapshot**
