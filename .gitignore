@@ -3,4 +3,5 @@ __pycache__/
 *.pyo
 .env
 scraper.log
+echerha_scraper.log
 .venv/
