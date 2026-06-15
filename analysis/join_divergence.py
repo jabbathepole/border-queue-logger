@@ -564,7 +564,9 @@ def write_outputs(
             "lag_note", "n_events",
             "q_BOTH_ELEVATED", "q_PHYSICAL_HIGH", "q_VIRTUAL_HIGH", "q_BOTH_NORMAL",
         ])
-        all_crossings = sorted(set(n_complete) | set(lag_by_crossing))
+        # list EVERY crossing seen in either feed so the sample size (incl. 0
+        # paired buckets) is always visible — never silently omit thin crossings.
+        all_crossings = sorted({r.crossing for r in rows} | set(n_complete) | set(lag_by_crossing))
         for c in all_crossings:
             lr = lag_by_crossing.get(c)
             qc = quad_counts.get(c, {})
@@ -640,7 +642,10 @@ def _maybe_charts(rows: list[JoinedRow], events: list[Event], p: Params) -> None
         for e in events:
             if e.crossing == crossing:
                 ax.axvspan(e.start, e.end, alpha=0.2, color="red")
-        ax.set_title(f"{crossing}: normalised physical vs virtual (decoupling shaded)")
+        ax.set_title(
+            f"{crossing} — directional-asymmetry: physical {PHYSICAL_DIRECTION} "
+            f"vs virtual {VIRTUAL_DIRECTION} (NOT same-flow; decoupling shaded)"
+        )
         ax.legend()
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %Hh"))
         fig.autofmt_xdate()
