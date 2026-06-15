@@ -113,3 +113,46 @@ Public no-login workload surface only. No account, login, booking flow,
 Diia/BankID, or per-driver data. Aggregate congestion metrics only.
 robots.txt was unreachable during recon (site intermittently closed the
 connection); cadence is conservative (30 min) and the User-Agent is descriptive.
+
+## Operations log
+
+### 2026-06-15 — logger stopped after one run; root cause = GitHub schedule not firing
+Symptom: after going live, `echerha.db` held only the single 11:32Z snapshot and
+no later scrapes appeared on `master`.
+
+Diagnosis (read-only): it was **not firing**, not firing-and-failing. The Actions
+API reported `total_count=1` for `echerha.yml` — the only run was a manual
+`workflow_dispatch`; **zero** `schedule` runs were ever created (none even as
+cancelled/skipped). Ruled out, with evidence:
+- code / API / headers — a local `curl` with the headers above returned HTTP 200;
+- Akamai blocking the runner — manual dispatch runs succeed from GitHub's Azure
+  runners (this **resolves the "Open risk — runner IP" above: Azure IPs DO get
+  past Akamai**; no proxy/self-hosted runner needed);
+- `continue-on-error` masking a failure — no runs existed at all to fail;
+- the shared `concurrency: border-data-commit` group — cancelled runs would still
+  appear in the API; none were created;
+- billing — repo is public → unlimited Actions minutes.
+
+**Root cause:** GitHub's hosted `schedule:` cron is unreliable and dropped the
+high-frequency `*/30` trigger entirely. (Platform limitation, not a code bug.)
+
+**Fix (chosen):** drive the workflow from an **external cron** that calls the
+GitHub `workflow_dispatch` API every 30 min — reliable, unlike GitHub's
+scheduler. The `schedule:` block is kept as a harmless backstop; no code change.
+```
+POST https://api.github.com/repos/jabbathepole/border-queue-logger/actions/workflows/echerha.yml/dispatches
+Headers: Authorization: Bearer <PAT>   Accept: application/vnd.github+json   X-GitHub-Api-Version: 2022-11-28
+Body:    {"ref":"master"}              ->  success = HTTP 204
+```
+Runner = cron-job.org. Auth = a fine-grained PAT named `logger-cron`, scoped to
+this repo with **Actions: Read and write** (same token also dispatches the
+granica `scrape.yml`).
+
+**Gotcha:** cron-job.org returned 401 because the `Authorization` header value
+was set to the literal text `$LOGGER_CRON_TOKEN` — cron-job.org does **not**
+expand shell variables. The header value must be the literal `Bearer github_pat_…`.
+
+**Verify automation is healthy:** `gh run list --workflow=echerha.yml` should
+show `workflow_dispatch` runs appearing on their own every ~30 min, and
+`data/echerha_*.csv` growing. (Confirmed working 2026-06-15 across several runs:
+24 rows each, 9/9 crossings, no anomaly/Unmapped warnings.)
