@@ -75,9 +75,40 @@ jobs:
             git commit -m "data: scrape $(date -u +%Y-%m-%dT%H:%MZ)"
 
       - name: Push
+        id: push
         if: steps.scrape.outcome == 'success'
-        run: git push
+        continue-on-error: true
+        run: |
+          # Rebase onto any commits the eCherga logger pushed meanwhile, so a
+          # concurrent push doesn't reject ours (mirrors echerha.yml). The
+          # shared concurrency group should serialise the two loggers, but in
+          # practice they can still overlap — rebase-before-push is the
+          # reliable guard.
+          git pull --rebase --autostash origin "${{ github.ref_name }}" || true
+          git push
 
-      - name: Fail the job if scrape failed
-        if: steps.scrape.outcome == 'failure'
+      - name: Open issue on push failure
+        if: steps.push.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Scraper push failure $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --body "$(cat <<'EOF'
+          The scrape succeeded but the push to the data branch failed — the
+          scraped data point was NOT saved (silent data loss until now).
+
+          **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Common cause: a non-fast-forward race with the eCherga logger that
+          the rebase-before-push did not resolve. Check the push step logs.
+          EOF
+          )" \
+            --label bug 2>/dev/null || \
+          gh issue create \
+            --title "Scraper push failure $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --body "Scrape succeeded but push failed (data not saved). See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Fail the job if scrape or push failed
+        if: steps.scrape.outcome == 'failure' || steps.push.outcome == 'failure'
         run: exit 1
