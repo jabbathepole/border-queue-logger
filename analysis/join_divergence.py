@@ -46,9 +46,10 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-# Fixed direction labels for the two feeds (see module docstring / METHODOLOGY).
+# Fixed direction labels for the feeds (see module docstring / METHODOLOGY).
 PHYSICAL_DIRECTION = "PL_to_UA_outbound"   # granica wyjazd
 VIRTUAL_DIRECTION = "UA_to_PL_inbound"     # eCherga (leaving UA -> entering PL)
+DPSU_DIRECTION = "UA_to_PL_physical"       # DPSU trucks queued in UA to exit to PL
 VEHICLE_CLASS = "truck"                    # trucks-to-trucks only
 
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -67,6 +68,9 @@ class Params:
     elevated_pct: float = 75.0      # per-crossing percentile = "elevated"
     decouple_pct: float = 90.0      # per-crossing |divergence| percentile = event threshold
     min_buckets: int = 24           # min complete buckets per crossing for steps 2-5
+    dpsu_max_age_hours: float = 6.0  # C-vs-B freshness cutoff: a forward-filled DPSU
+                                     # reading older than this is too stale to rank
+                                     # (~2x the nominal ~3h DPSU refresh; tunable)
     lag_hours: int = 24             # cross-correlation lag scan range (+/-)
     virtual_metric: str = "virtual_wait_s"   # or "vehicles_waiting"
     truck_wait_agg: str = "max"     # how to collapse eCherga truck sub-queues' wait: max|mean
@@ -233,19 +237,32 @@ def _in_window(ts: dt.datetime, p: Params) -> bool:
 # --------------------------------------------------------------------------- #
 def load_dpsu(p: Params) -> dict[str, list[tuple[dt.datetime, float]]]:
     """Per crossing, the time-ordered DPSU truck readings keyed on the SOURCE's
-    own update time (source_updated_utc), not our poll time. Returns {} if the
+    own update time (source_updated_utc), not our poll time. These DISTINCT native
+    readings are also the percentile baseline for dpsu_rank (§2a) — one weight per
+    real source update, NOT the forward-filled bucket series. Returns {} if the
     DPSU db isn't present (the join still runs without it).
 
     Readings are NOT window-filtered here: a reading from just before the window
     is needed to forward-fill the window's first buckets. Staleness is surfaced
-    later via reading age, not by dropping early readings."""
+    later via reading age, not by dropping early readings.
+
+    ts_synthetic=1 rows are EXCLUDED (FIX 1.1): their source_updated_utc is our
+    poll time, not a real source update, so they must not anchor a baseline or be
+    smeared across buckets by forward-fill."""
     if not os.path.exists(p.dpsu_db):
         return {}
     series: dict[str, list[tuple[dt.datetime, float]]] = defaultdict(list)
     with _connect_ro(p.dpsu_db) as conn:
+        # Guard for dbs written before the ts_synthetic migration (this is a
+        # read-only consumer; it cannot ALTER, so it adapts to the schema it finds).
+        has_synth = any(
+            row["name"] == "ts_synthetic"
+            for row in conn.execute("PRAGMA table_info(dpsu_records)")
+        )
+        synth_filter = "AND COALESCE(ts_synthetic, 0) = 0" if has_synth else ""
         rows = conn.execute(
             "SELECT crossing_id, source_updated_utc, trucks_waiting "
-            "FROM dpsu_records WHERE trucks_waiting IS NOT NULL"
+            f"FROM dpsu_records WHERE trucks_waiting IS NOT NULL {synth_filter}"
         ).fetchall()
     seen: set[tuple[str, str]] = set()
     for r in rows:
@@ -312,6 +329,17 @@ class JoinedRow:
     dpsu_trucks: float | None = None
     dpsu_src_updated_utc: str | None = None
     dpsu_reading_age_s: int | None = None
+    # C-vs-B (same-direction UA->PL physical-vs-virtual) — PR 2. dpsu_rank is the
+    # DPSU truck count's per-crossing percentile, baselined over DISTINCT NATIVE
+    # readings (§2a) and assigned only to fresh-enough fills (age within
+    # --dpsu-max-age-hours); stale fills get dpsu_rank=None, dpsu_stale=True while
+    # the raw dpsu_trucks/age columns above stay unfiltered. cb_divergence_rank =
+    # dpsu_rank - virt_rank; cb_quadrant labels the physical-vs-virtual 2x2.
+    dpsu_rank: float | None = None
+    dpsu_elevated: bool | None = None
+    dpsu_stale: bool | None = None
+    cb_divergence_rank: float | None = None
+    cb_quadrant: str | None = None
 
 
 QUADRANTS = {
@@ -400,6 +428,77 @@ def _value_at_pct(sorted_vals: list[float], pct: float) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# Steps 2c-3c — C-vs-B: same-direction (UA->PL) physical-vs-virtual divergence
+# (DPSU physical truck count vs eCherga virtual queue). Additive; the A-vs-B
+# granica-vs-eCherga divergence above is untouched.
+# --------------------------------------------------------------------------- #
+CB_QUADRANTS = {
+    (True, True): "aligned_busy",      # both elevated
+    (True, False): "physical_only",    # real trucks on the ground not in the booking queue
+    (False, True): "virtual_only",     # booking queue inflated vs what's physically present
+    (False, False): "aligned_quiet",   # neither elevated
+}
+
+
+def normalise_dpsu_and_diverge(
+    rows: list[JoinedRow],
+    dpsu: dict[str, list[tuple[dt.datetime, float]]],
+    p: Params,
+) -> dict[str, tuple[int, int]]:
+    """Percentile-normalise the forward-filled DPSU truck count into `dpsu_rank`
+    and compute the C-vs-B divergence on fresh-enough buckets only.
+
+    §2a crux: the percentile baseline is each crossing's DISTINCT NATIVE readings
+    (`dpsu` already holds exactly these — one weight per real source_updated_utc),
+    NOT the forward-filled bucket series. We then ASSIGN those ranks to the
+    fresh-enough filled buckets. This avoids a reading that precedes a long gap
+    being counted dozens of times in the distribution.
+
+    §2b staleness: a bucket whose dpsu_reading_age_s exceeds
+    --dpsu-max-age-hours is excluded from dpsu_rank / C-vs-B (dpsu_rank=None,
+    dpsu_stale=True). The raw dpsu_trucks / dpsu_reading_age_s columns are kept
+    unfiltered for transparency.
+
+    Sufficiency: a crossing needs >= min_buckets distinct native readings before
+    its dpsu_rank is trusted (same gate philosophy as phys/virt rank), else the
+    percentile distribution is degenerate.
+
+    Returns {crossing: (n_native_readings, n_cb_buckets)} for reporting."""
+    baselines = {c: sorted(v for _, v in series) for c, series in dpsu.items()}
+    cutoff_s = p.dpsu_max_age_hours * 3600.0
+    by_crossing: dict[str, list[JoinedRow]] = defaultdict(list)
+    for r in rows:
+        by_crossing[r.crossing].append(r)
+
+    report: dict[str, tuple[int, int]] = {}
+    for crossing, crows in by_crossing.items():
+        native = baselines.get(crossing, [])
+        n_native = len(native)
+        sufficient = n_native >= p.min_buckets
+        thr = _value_at_pct(native, p.elevated_pct) if sufficient else None
+
+        n_cb = 0
+        for r in crows:
+            if r.dpsu_trucks is None:
+                continue  # no fill on this bucket — leave normalised fields None
+            stale = r.dpsu_reading_age_s is not None and r.dpsu_reading_age_s > cutoff_s
+            r.dpsu_stale = stale
+            if stale or not sufficient:
+                continue  # raw columns kept; only the normalised/compared values gated
+            r.dpsu_rank = _percentile_rank(r.dpsu_trucks, native)
+            r.dpsu_elevated = r.dpsu_trucks > thr
+            # C-vs-B needs eCherga's virt_rank on the same bucket (set by
+            # normalise_and_classify on complete, sufficient-data buckets).
+            if r.virt_rank is not None:
+                r.cb_divergence_rank = r.dpsu_rank - r.virt_rank
+                if r.virt_elevated is not None:
+                    r.cb_quadrant = CB_QUADRANTS[(r.dpsu_elevated, r.virt_elevated)]
+                n_cb += 1
+        report[crossing] = (n_native, n_cb)
+    return report
+
+
+# --------------------------------------------------------------------------- #
 # Step 4 — rank decoupling events
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -417,10 +516,24 @@ class Event:
     score: float  # peak_abs * duration_h, for ranking
 
 
-def find_events(rows: list[JoinedRow], p: Params, n_complete: dict[str, int]) -> list[Event]:
+def _rank_events(
+    rows: list[JoinedRow],
+    p: Params,
+    n_complete: dict[str, int],
+    *,
+    div_of,
+    quad_of,
+    gate,
+    direction_note: str,
+) -> list[Event]:
+    """Generic contiguous-decoupling-run ranker shared by A-vs-B (find_events) and
+    C-vs-B (find_cb_events). `div_of`/`quad_of` pluck the divergence / quadrant for
+    the comparison; `gate` selects which rows are eligible. A crossing needs
+    min_buckets complete buckets (both comparisons only populate their divergence
+    on such crossings, so this gate never silently shrinks one of them)."""
     by_crossing: dict[str, list[JoinedRow]] = defaultdict(list)
     for r in rows:
-        if r.complete and r.divergence is not None:
+        if gate(r):
             by_crossing[r.crossing].append(r)
 
     events: list[Event] = []
@@ -428,7 +541,7 @@ def find_events(rows: list[JoinedRow], p: Params, n_complete: dict[str, int]) ->
         if n_complete.get(crossing, 0) < p.min_buckets:
             continue
         crows.sort(key=lambda r: r.bucket)
-        abs_divs = sorted(abs(r.divergence) for r in crows)
+        abs_divs = sorted(abs(div_of(r)) for r in crows)
         thr = _value_at_pct(abs_divs, p.decouple_pct)
 
         run: list[JoinedRow] = []
@@ -437,19 +550,19 @@ def find_events(rows: list[JoinedRow], p: Params, n_complete: dict[str, int]) ->
         def flush(run: list[JoinedRow]) -> None:
             if not run:
                 return
-            divs = [r.divergence for r in run]
+            divs = [div_of(r) for r in run]
             peak = max(abs(d) for d in divs)
             mean_d = statistics.fmean(divs)
             elevated_side = "physical" if mean_d > 0 else "virtual"
             quad_counts = defaultdict(int)
             for r in run:
-                quad_counts[r.quadrant] += 1
+                quad_counts[quad_of(r)] += 1
             dom_quad = max(quad_counts, key=quad_counts.get)
             duration_h = (run[-1].bucket - run[0].bucket).total_seconds() / 3600.0 + p.bucket_hours
             events.append(
                 Event(
                     crossing=crossing,
-                    direction_note=f"{PHYSICAL_DIRECTION} phys vs {VIRTUAL_DIRECTION} virt",
+                    direction_note=direction_note,
                     start=run[0].bucket,
                     end=run[-1].bucket,
                     duration_h=duration_h,
@@ -464,7 +577,7 @@ def find_events(rows: list[JoinedRow], p: Params, n_complete: dict[str, int]) ->
 
         prev_bucket: dt.datetime | None = None
         for r in crows:
-            over = abs(r.divergence) >= thr and thr > 0
+            over = abs(div_of(r)) >= thr and thr > 0
             broken = prev_bucket is not None and (r.bucket - prev_bucket) > contiguous_gap
             if over and not broken:
                 run.append(r)
@@ -479,6 +592,30 @@ def find_events(rows: list[JoinedRow], p: Params, n_complete: dict[str, int]) ->
 
     events.sort(key=lambda e: e.score, reverse=True)
     return events
+
+
+def find_events(rows: list[JoinedRow], p: Params, n_complete: dict[str, int]) -> list[Event]:
+    """A-vs-B: granica (PL->UA outbound physical) vs eCherga (UA->PL virtual)."""
+    return _rank_events(
+        rows, p, n_complete,
+        div_of=lambda r: r.divergence,
+        quad_of=lambda r: r.quadrant,
+        gate=lambda r: r.complete and r.divergence is not None,
+        direction_note=f"{PHYSICAL_DIRECTION} phys vs {VIRTUAL_DIRECTION} virt",
+    )
+
+
+def find_cb_events(rows: list[JoinedRow], p: Params, n_complete: dict[str, int]) -> list[Event]:
+    """C-vs-B: DPSU (UA->PL physical) vs eCherga (UA->PL virtual) — SAME direction.
+    Only fresh-enough buckets carry cb_divergence_rank, so the run-ranking sees
+    only trustworthy fills."""
+    return _rank_events(
+        rows, p, n_complete,
+        div_of=lambda r: r.cb_divergence_rank,
+        quad_of=lambda r: r.cb_quadrant or "",
+        gate=lambda r: r.cb_divergence_rank is not None,
+        direction_note=f"{DPSU_DIRECTION} phys vs {VIRTUAL_DIRECTION} virt (same direction)",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -559,6 +696,7 @@ def _corr_at_lag(series: dict[dt.datetime, tuple[float, float]], lag: int, bucke
 def write_outputs(
     rows: list[JoinedRow],
     events: list[Event],
+    cb_events: list[Event],
     lags: list[LagResult],
     n_complete: dict[str, int],
     p: Params,
@@ -566,6 +704,7 @@ def write_outputs(
     os.makedirs(p.out_dir, exist_ok=True)
     joined_csv = os.path.join(p.out_dir, "joined_divergence.csv")
     events_csv = os.path.join(p.out_dir, "decoupling_events.csv")
+    cb_events_csv = os.path.join(p.out_dir, "cb_decoupling_events.csv")
     summary_csv = os.path.join(p.out_dir, "per_crossing_summary.csv")
     analysis_db = os.path.join(p.out_dir, "analysis.db")
 
@@ -582,6 +721,8 @@ def write_outputs(
             "phys_elevated", "virt_elevated", "quadrant",
             # DPSU UA->PL physical truck count (forward-filled) + its reading age.
             "dpsu_trucks_ff", "dpsu_src_updated_utc", "dpsu_reading_age_s",
+            # C-vs-B (same-direction UA->PL physical-vs-virtual) — gated by freshness.
+            "dpsu_rank", "dpsu_stale", "cb_divergence_rank", "cb_quadrant",
         ])
         for r in rows:
             w.writerow([
@@ -594,23 +735,14 @@ def write_outputs(
                 _fmt(r.divergence), _fmt(r.divergence_z),
                 _fmt_bool(r.phys_elevated), _fmt_bool(r.virt_elevated), r.quadrant or "",
                 _fmt(r.dpsu_trucks), r.dpsu_src_updated_utc or "", _fmt(r.dpsu_reading_age_s),
+                _fmt(r.dpsu_rank), _fmt_bool(r.dpsu_stale),
+                _fmt(r.cb_divergence_rank), r.cb_quadrant or "",
             ])
 
-    # events CSV (ranked)
-    with open(events_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "rank", "crossing", "direction_note", "start_utc", "end_utc",
-            "duration_h", "n_buckets", "peak_abs_divergence", "mean_divergence",
-            "elevated_side", "dominant_quadrant", "score_peakxduration",
-        ])
-        for i, e in enumerate(events, 1):
-            w.writerow([
-                i, e.crossing, e.direction_note, e.start.strftime(TS_FMT),
-                e.end.strftime(TS_FMT), f"{e.duration_h:.2f}", e.n_buckets,
-                f"{e.peak_abs_divergence:.4f}", f"{e.mean_divergence:.4f}",
-                e.elevated_side, e.dominant_quadrant, f"{e.score:.4f}",
-            ])
+    # events CSVs (ranked) — A-vs-B and C-vs-B kept SEPARATE so the two analyses
+    # are never conflated.
+    _write_events_csv(events_csv, events)
+    _write_events_csv(cb_events_csv, cb_events)
 
     # per-crossing summary
     quad_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -662,10 +794,11 @@ def write_outputs(
             "phys_wait_min_mean REAL, virt_metric TEXT, virt_mean REAL,"
             "complete INTEGER, phys_rank REAL, virt_rank REAL,"
             "divergence_rank REAL, quadrant TEXT,"
-            "dpsu_trucks_ff REAL, dpsu_src_updated_utc TEXT, dpsu_reading_age_s INTEGER)"
+            "dpsu_trucks_ff REAL, dpsu_src_updated_utc TEXT, dpsu_reading_age_s INTEGER,"
+            "dpsu_rank REAL, dpsu_stale INTEGER, cb_divergence_rank REAL, cb_quadrant TEXT)"
         )
         conn.executemany(
-            "INSERT INTO joined_divergence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO joined_divergence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     r.crossing, r.bucket.strftime(TS_FMT), VEHICLE_CLASS,
@@ -674,6 +807,9 @@ def write_outputs(
                     int(r.complete), r.phys_rank, r.virt_rank,
                     r.divergence, r.quadrant,
                     r.dpsu_trucks, r.dpsu_src_updated_utc, r.dpsu_reading_age_s,
+                    r.dpsu_rank,
+                    None if r.dpsu_stale is None else int(r.dpsu_stale),
+                    r.cb_divergence_rank, r.cb_quadrant,
                 )
                 for r in rows
             ],
@@ -681,14 +817,17 @@ def write_outputs(
 
     print(f"  wrote {joined_csv}")
     print(f"  wrote {events_csv}")
+    print(f"  wrote {cb_events_csv}")
     print(f"  wrote {summary_csv}")
     print(f"  wrote {analysis_db}")
 
     if p.make_charts:
-        _maybe_charts(rows, events, p)
+        _maybe_charts(rows, events, cb_events, p)
 
 
-def _maybe_charts(rows: list[JoinedRow], events: list[Event], p: Params) -> None:
+def _maybe_charts(
+    rows: list[JoinedRow], events: list[Event], cb_events: list[Event], p: Params
+) -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -697,6 +836,8 @@ def _maybe_charts(rows: list[JoinedRow], events: list[Event], p: Params) -> None
     except ImportError:
         print("  [charts skipped: matplotlib not installed]")
         return
+
+    # A-vs-B (granica vs eCherga, cross-direction asymmetry).
     by_crossing: dict[str, list[JoinedRow]] = defaultdict(list)
     for r in rows:
         if r.complete and r.phys_rank is not None:
@@ -721,6 +862,52 @@ def _maybe_charts(rows: list[JoinedRow], events: list[Event], p: Params) -> None
         fig.savefig(path, dpi=110, bbox_inches="tight")
         plt.close(fig)
         print(f"  wrote {path}")
+
+    # C-vs-B (DPSU vs eCherga, SAME UA->PL direction) — only fresh-enough buckets
+    # carry dpsu_rank, so plot exactly those.
+    cb_by_crossing: dict[str, list[JoinedRow]] = defaultdict(list)
+    for r in rows:
+        if r.dpsu_rank is not None and r.virt_rank is not None:
+            cb_by_crossing[r.crossing].append(r)
+    for crossing, crows in cb_by_crossing.items():
+        crows.sort(key=lambda r: r.bucket)
+        xs = [r.bucket for r in crows]
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(xs, [r.dpsu_rank for r in crows], label="DPSU physical (UA→PL) rank")
+        ax.plot(xs, [r.virt_rank for r in crows], label="eCherga virtual (UA→PL) rank")
+        for e in cb_events:
+            if e.crossing == crossing:
+                ax.axvspan(e.start, e.end, alpha=0.2, color="red")
+        ax.set_title(
+            f"{crossing} — same-direction {DPSU_DIRECTION}: physical (DPSU) vs "
+            f"virtual (eCherga); fresh-enough buckets only, decoupling shaded"
+        )
+        ax.legend()
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %Hh"))
+        fig.autofmt_xdate()
+        path = os.path.join(p.out_dir, f"chart_cb_{crossing}.png")
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  wrote {path}")
+
+
+def _write_events_csv(path: str, events: list[Event]) -> None:
+    """Ranked decoupling-events CSV. Same schema for A-vs-B and C-vs-B; the feed
+    pairing is carried in each row's direction_note."""
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "rank", "crossing", "direction_note", "start_utc", "end_utc",
+            "duration_h", "n_buckets", "peak_abs_divergence", "mean_divergence",
+            "elevated_side", "dominant_quadrant", "score_peakxduration",
+        ])
+        for i, e in enumerate(events, 1):
+            w.writerow([
+                i, e.crossing, e.direction_note, e.start.strftime(TS_FMT),
+                e.end.strftime(TS_FMT), f"{e.duration_h:.2f}", e.n_buckets,
+                f"{e.peak_abs_divergence:.4f}", f"{e.mean_divergence:.4f}",
+                e.elevated_side, e.dominant_quadrant, f"{e.score:.4f}",
+            ])
 
 
 def _fmt(v) -> str:
@@ -786,9 +973,45 @@ def run(p: Params) -> None:
               "granica polls every 3h). Divergence/events/lag are not computable; "
               "the joined table is written for inspection but carries no statistics.")
 
+    # Steps 2c-3c — C-vs-B same-direction (UA->PL) physical-vs-virtual divergence.
+    # DPSU truck count normalised over its DISTINCT NATIVE readings (§2a), gated by
+    # the freshness cutoff (§2b), then compared to eCherga's virt_rank.
+    cb_report = normalise_dpsu_and_diverge(rows, dpsu, p)
+    print(f"\nStep 2c-3c — C-vs-B (same-direction {DPSU_DIRECTION} physical vs "
+          f"{VIRTUAL_DIRECTION} virtual):")
+    if not dpsu:
+        print("  DPSU feed absent — C-vs-B not computed.")
+    else:
+        filled = [r for r in rows if r.dpsu_trucks is not None]
+        n_filled = len(filled)
+        n_stale = sum(1 for r in filled if r.dpsu_stale)
+        n_fresh = n_filled - n_stale
+        pct_stale = (100.0 * n_stale / n_filled) if n_filled else 0.0
+        # The methodology figure: how much of the forward-filled feed the cutoff keeps.
+        print(f"  freshness cutoff = {p.dpsu_max_age_hours} h: {n_fresh}/{n_filled} "
+              f"filled buckets within cutoff ({pct_stale:.0f}% excluded as stale).")
+        cb_sufficient = sorted(c for c, (nn, _) in cb_report.items() if nn >= p.min_buckets)
+        cb_thin = sorted((c, nn) for c, (nn, _) in cb_report.items() if nn < p.min_buckets)
+        if cb_sufficient:
+            print(f"  crossings with >= {p.min_buckets} distinct native DPSU "
+                  f"readings (dpsu_rank trusted): {cb_sufficient}")
+        if cb_thin:
+            print(f"  ⚠ too few native DPSU readings for a baseline (dpsu_rank "
+                  f"skipped): {cb_thin}")
+        n_cb_buckets = sum(1 for r in rows if r.cb_divergence_rank is not None)
+        print(f"  C-vs-B divergence computed on {n_cb_buckets} buckets "
+              f"(fresh DPSU rank AND eCherga rank both present).")
+
     events = find_events(rows, p, n_complete)
-    print(f"\nStep 4 — decoupling events ranked: {len(events)}")
+    print(f"\nStep 4 — A-vs-B decoupling events ranked: {len(events)}")
     for e in events[:10]:
+        print(f"  {e.crossing:12} {e.start.strftime(TS_FMT)}→{e.end.strftime(TS_FMT)} "
+              f"dur={e.duration_h:.1f}h peak|div|={e.peak_abs_divergence:.2f} "
+              f"{e.elevated_side} {e.dominant_quadrant}")
+
+    cb_events = find_cb_events(rows, p, n_complete)
+    print(f"\nStep 4c — C-vs-B decoupling events ranked: {len(cb_events)}")
+    for e in cb_events[:10]:
         print(f"  {e.crossing:12} {e.start.strftime(TS_FMT)}→{e.end.strftime(TS_FMT)} "
               f"dur={e.duration_h:.1f}h peak|div|={e.peak_abs_divergence:.2f} "
               f"{e.elevated_side} {e.dominant_quadrant}")
@@ -804,7 +1027,7 @@ def run(p: Params) -> None:
                   f"(n={l.n_pairs_at_peak}) {l.note}")
 
     print("\nStep 6 — outputs:")
-    write_outputs(rows, events, lags, n_complete, p)
+    write_outputs(rows, events, cb_events, lags, n_complete, p)
     print("\nDone. Loggers' databases were opened read-only and not modified.")
 
 
@@ -818,6 +1041,9 @@ def parse_args(argv=None) -> Params:
     ap.add_argument("--elevated-pct", type=float, default=75.0)
     ap.add_argument("--decouple-pct", type=float, default=90.0)
     ap.add_argument("--min-buckets", type=int, default=24)
+    ap.add_argument("--dpsu-max-age-hours", type=float, default=6.0,
+                    help="C-vs-B freshness cutoff: drop DPSU fills older than this "
+                         "from dpsu_rank / C-vs-B divergence (default 6h ~ 2x refresh)")
     ap.add_argument("--lag-hours", type=int, default=24)
     ap.add_argument("--virtual-metric", choices=["virtual_wait_s", "vehicles_waiting"], default="virtual_wait_s")
     ap.add_argument("--truck-wait-agg", choices=["max", "mean"], default="max")
@@ -828,7 +1054,8 @@ def parse_args(argv=None) -> Params:
     return Params(
         queues_db=a.queues_db, echerha_db=a.echerha_db, dpsu_db=a.dpsu_db, out_dir=a.out_dir,
         bucket_hours=a.bucket_hours, elevated_pct=a.elevated_pct,
-        decouple_pct=a.decouple_pct, min_buckets=a.min_buckets, lag_hours=a.lag_hours,
+        decouple_pct=a.decouple_pct, min_buckets=a.min_buckets,
+        dpsu_max_age_hours=a.dpsu_max_age_hours, lag_hours=a.lag_hours,
         virtual_metric=a.virtual_metric, truck_wait_agg=a.truck_wait_agg,
         window_start=a.window_start, window_end=a.window_end, make_charts=a.charts,
     )
