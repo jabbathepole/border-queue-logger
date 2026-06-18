@@ -36,6 +36,7 @@ than degenerate statistics.
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import datetime as dt
 import math
@@ -60,6 +61,7 @@ TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 class Params:
     queues_db: str
     echerha_db: str
+    dpsu_db: str
     out_dir: str
     bucket_hours: float = 1.0
     elevated_pct: float = 75.0      # per-crossing percentile = "elevated"
@@ -226,6 +228,59 @@ def _in_window(ts: dt.datetime, p: Params) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# DPSU UA->PL physical truck count — sparse (~3 h) feed, forward-filled (FIX 2)
+# with a per-bucket reading age (FIX 1)
+# --------------------------------------------------------------------------- #
+def load_dpsu(p: Params) -> dict[str, list[tuple[dt.datetime, float]]]:
+    """Per crossing, the time-ordered DPSU truck readings keyed on the SOURCE's
+    own update time (source_updated_utc), not our poll time. Returns {} if the
+    DPSU db isn't present (the join still runs without it).
+
+    Readings are NOT window-filtered here: a reading from just before the window
+    is needed to forward-fill the window's first buckets. Staleness is surfaced
+    later via reading age, not by dropping early readings."""
+    if not os.path.exists(p.dpsu_db):
+        return {}
+    series: dict[str, list[tuple[dt.datetime, float]]] = defaultdict(list)
+    with _connect_ro(p.dpsu_db) as conn:
+        rows = conn.execute(
+            "SELECT crossing_id, source_updated_utc, trucks_waiting "
+            "FROM dpsu_records WHERE trucks_waiting IS NOT NULL"
+        ).fetchall()
+    seen: set[tuple[str, str]] = set()
+    for r in rows:
+        key = (r["crossing_id"], r["source_updated_utc"])
+        if key in seen:
+            continue  # same source reading polled multiple times
+        seen.add(key)
+        series[r["crossing_id"]].append((_parse_ts(r["source_updated_utc"]), float(r["trucks_waiting"])))
+    for c in series:
+        series[c].sort(key=lambda t: t[0])
+    return series
+
+
+def attach_dpsu(rows: list[JoinedRow], dpsu: dict[str, list[tuple[dt.datetime, float]]]) -> int:
+    """Forward-fill the most recent DPSU reading onto each joined bucket and tag
+    it with its age (bucket_start - source_updated_utc). Uses bucket START as the
+    reference so no future reading leaks backwards. Returns #rows filled."""
+    times_by_crossing = {c: [t for t, _ in series] for c, series in dpsu.items()}
+    filled = 0
+    for r in rows:
+        series = dpsu.get(r.crossing)
+        if not series:
+            continue
+        idx = bisect.bisect_right(times_by_crossing[r.crossing], r.bucket) - 1
+        if idx < 0:
+            continue  # bucket precedes the first DPSU reading
+        ts, trucks = series[idx]
+        r.dpsu_trucks = trucks
+        r.dpsu_src_updated_utc = ts.strftime(TS_FMT)
+        r.dpsu_reading_age_s = int((r.bucket - ts).total_seconds())
+        filled += 1
+    return filled
+
+
+# --------------------------------------------------------------------------- #
 # Steps 2-3 — normalise + join + quadrant
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -249,6 +304,14 @@ class JoinedRow:
     phys_elevated: bool | None = None
     virt_elevated: bool | None = None
     quadrant: str | None = None
+    # DPSU UA->PL PHYSICAL truck count, forward-filled onto this bucket (FIX 2),
+    # always carrying the source reading's age (FIX 1). This is the same-direction
+    # physical partner to eCherga's UA->PL virtual queue. NOT folded into the
+    # granica-vs-eCherga divergence above — exposed as raw columns so analysis can
+    # filter on dpsu_reading_age_s and decide what staleness is acceptable.
+    dpsu_trucks: float | None = None
+    dpsu_src_updated_utc: str | None = None
+    dpsu_reading_age_s: int | None = None
 
 
 QUADRANTS = {
@@ -517,6 +580,8 @@ def write_outputs(
             "complete", "phys_rank", "virt_rank", "phys_z", "virt_z",
             "divergence_rank", "divergence_z",
             "phys_elevated", "virt_elevated", "quadrant",
+            # DPSU UA->PL physical truck count (forward-filled) + its reading age.
+            "dpsu_trucks_ff", "dpsu_src_updated_utc", "dpsu_reading_age_s",
         ])
         for r in rows:
             w.writerow([
@@ -528,6 +593,7 @@ def write_outputs(
                 _fmt(r.phys_z), _fmt(r.virt_z),
                 _fmt(r.divergence), _fmt(r.divergence_z),
                 _fmt_bool(r.phys_elevated), _fmt_bool(r.virt_elevated), r.quadrant or "",
+                _fmt(r.dpsu_trucks), r.dpsu_src_updated_utc or "", _fmt(r.dpsu_reading_age_s),
             ])
 
     # events CSV (ranked)
@@ -595,10 +661,11 @@ def write_outputs(
             "physical_direction TEXT, virtual_direction TEXT,"
             "phys_wait_min_mean REAL, virt_metric TEXT, virt_mean REAL,"
             "complete INTEGER, phys_rank REAL, virt_rank REAL,"
-            "divergence_rank REAL, quadrant TEXT)"
+            "divergence_rank REAL, quadrant TEXT,"
+            "dpsu_trucks_ff REAL, dpsu_src_updated_utc TEXT, dpsu_reading_age_s INTEGER)"
         )
         conn.executemany(
-            "INSERT INTO joined_divergence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO joined_divergence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 (
                     r.crossing, r.bucket.strftime(TS_FMT), VEHICLE_CLASS,
@@ -606,6 +673,7 @@ def write_outputs(
                     r.phys_mean, p.virtual_metric, r.virt_mean,
                     int(r.complete), r.phys_rank, r.virt_rank,
                     r.divergence, r.quadrant,
+                    r.dpsu_trucks, r.dpsu_src_updated_utc, r.dpsu_reading_age_s,
                 )
                 for r in rows
             ],
@@ -689,6 +757,20 @@ def run(p: Params) -> None:
     print(f"  joined rows: {n_total}  ({n_complete_rows} complete, "
           f"{n_total - n_complete_rows} incomplete/excluded)")
 
+    # DPSU UA->PL physical truck count: sparse ~3 h feed, forward-filled onto the
+    # grid with a per-bucket reading age (FIXES 1 & 2). Exposed as raw columns;
+    # the granica-vs-eCherga divergence above is unchanged.
+    dpsu = load_dpsu(p)
+    if dpsu:
+        n_filled = attach_dpsu(rows, dpsu)
+        ages = [r.dpsu_reading_age_s for r in rows if r.dpsu_reading_age_s is not None]
+        med_age = sorted(ages)[len(ages) // 2] / 3600.0 if ages else float("nan")
+        print(f"  DPSU forward-fill: {n_filled}/{n_total} buckets carry a truck "
+              f"count (median reading age {med_age:.1f} h). Filter on "
+              f"dpsu_reading_age_s downstream to drop stale fills.")
+    else:
+        print(f"  DPSU: {p.dpsu_db} not present — dpsu_* columns left empty.")
+
     n_complete = normalise_and_classify(rows, p)
     print("\nStep 2-3 — per-crossing normalisation + quadrant:")
     sufficient = [c for c, n in n_complete.items() if n >= p.min_buckets]
@@ -730,6 +812,7 @@ def parse_args(argv=None) -> Params:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--queues-db", default="data/queues.db")
     ap.add_argument("--echerha-db", default="data/echerha.db")
+    ap.add_argument("--dpsu-db", default="data/dpsu.db")
     ap.add_argument("--out-dir", default="analysis/output")
     ap.add_argument("--bucket-hours", type=float, default=1.0)
     ap.add_argument("--elevated-pct", type=float, default=75.0)
@@ -743,7 +826,7 @@ def parse_args(argv=None) -> Params:
     ap.add_argument("--charts", action="store_true")
     a = ap.parse_args(argv)
     return Params(
-        queues_db=a.queues_db, echerha_db=a.echerha_db, out_dir=a.out_dir,
+        queues_db=a.queues_db, echerha_db=a.echerha_db, dpsu_db=a.dpsu_db, out_dir=a.out_dir,
         bucket_hours=a.bucket_hours, elevated_pct=a.elevated_pct,
         decouple_pct=a.decouple_pct, min_buckets=a.min_buckets, lag_hours=a.lag_hours,
         virtual_metric=a.virtual_metric, truck_wait_agg=a.truck_wait_agg,
