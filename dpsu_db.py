@@ -17,6 +17,13 @@ import sqlite3
 #           metadata (it reflects car load, not freight); freight banding is done
 #           downstream by percentile normalisation on raw trucks_waiting.
 #   FIX 6 — closure_flag / parse_miss_flag give a NULL truck count meaning.
+#
+# PR-2 fixes:
+#   1.1 — ts_synthetic: 1 when source_updated_utc was *synthesised* from our poll
+#         time (data-created_at absent). Such a row's timing is unreliable, so the
+#         analysis must exclude it from baselines and forward-fill.
+#   1.2 — restricted_flag: 1 for a LIMITED/partial state (neither a full closure
+#         nor a parse miss). Keeps a partial state from being miscoded as closed.
 CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS dpsu_records (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,9 +35,10 @@ CREATE TABLE IF NOT EXISTS dpsu_records (
     cars_waiting         INTEGER,            -- NULL when suspended / sentence
     cars_per_hour        INTEGER,            -- cars only; no freight rate exists
     load_color           TEXT,               -- raw car-load colour ONLY (metadata)
-    state                TEXT,               -- open / closed (raw UA string)
+    state                TEXT,               -- open / closed / limited (raw UA string)
     closure_flag         INTEGER DEFAULT 0,  -- 1 if closed + NULL trucks
     parse_miss_flag      INTEGER DEFAULT 0,  -- 1 if open + NULL trucks
+    restricted_flag      INTEGER DEFAULT 0,  -- 1 if a LIMITED/partial state (FIX 1.2)
     character            TEXT,
     category             TEXT,
     location             TEXT,
@@ -40,6 +48,7 @@ CREATE TABLE IF NOT EXISTS dpsu_records (
     source_updated_kyiv  TEXT,               -- raw data-created_at (naive, Kyiv local)
     source_updated_utc   TEXT    NOT NULL,   -- DST-converted, UTC, ...Z
     reading_age_seconds  INTEGER,            -- scraped_at - source_updated_utc
+    ts_synthetic         INTEGER DEFAULT 0,  -- 1 if source_updated_utc==poll time (FIX 1.1)
     state_of_busy_raw    TEXT,               -- keep the blob for re-parsing later
     UNIQUE(crossing_id, source_updated_utc)
 )
@@ -48,17 +57,28 @@ CREATE TABLE IF NOT EXISTS dpsu_records (
 _COLUMNS = [
     "scraped_at", "crossing_id", "crossing_name", "dpsu_name",
     "trucks_waiting", "cars_waiting", "cars_per_hour", "load_color",
-    "state", "closure_flag", "parse_miss_flag",
+    "state", "closure_flag", "parse_miss_flag", "restricted_flag",
     "character", "category", "location", "lat", "lng", "camera_url",
     "source_updated_kyiv", "source_updated_utc", "reading_age_seconds",
-    "state_of_busy_raw",
+    "ts_synthetic", "state_of_busy_raw",
 ]
+
+# Columns added after the initial schema shipped; ALTER-in for pre-existing dbs
+# (cheap — the dataset is young). name -> column definition.
+_MIGRATIONS = {
+    "restricted_flag": "INTEGER DEFAULT 0",
+    "ts_synthetic": "INTEGER DEFAULT 0",
+}
 
 
 def init_db(db_path: str) -> None:
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     with sqlite3.connect(db_path) as conn:
         conn.execute(CREATE_TABLE)
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(dpsu_records)")}
+        for col, decl in _MIGRATIONS.items():
+            if col not in existing:
+                conn.execute(f"ALTER TABLE dpsu_records ADD COLUMN {col} {decl}")
 
 
 def insert_records(db_path: str, records: list) -> int:

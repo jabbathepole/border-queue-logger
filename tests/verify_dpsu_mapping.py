@@ -23,6 +23,7 @@ from dpsu_scraper import (
     DPSU_NAME_TO_CANONICAL,
     DPSU_NAMES_TO_DROP,
     UnknownCrossingError,
+    UnknownStateError,
     kyiv_to_utc,
     parse_state_of_busy,
     scrape_all,
@@ -142,6 +143,34 @@ try:
     check("unknown crossing name hard-fails", False, "no exception raised")
 except UnknownCrossingError:
     check("unknown crossing name hard-fails", True)
+
+# --- 6. PR-2 fixes: restricted state, synthetic ts, unknown state ------------
+# present created_at on the main fixture -> ts_synthetic=0
+check("present created_at -> ts_synthetic=0", by_id["dorohusk"]["ts_synthetic"] == 0)
+
+# FIX 1.2 — a LIMITED state is restricted, NOT a closure and NOT a parse miss
+lim = scrape_all("<select id='by_name'>" + _opt(
+    "Краківець - Корчова", state="обмежений",
+    sob="Кількість вантажних авто перед ППр: 50") + "</select>", NOW)[0]
+check("limited state -> restricted_flag=1, closure_flag=0, parse_miss_flag=0",
+      lim["restricted_flag"] == 1 and lim["closure_flag"] == 0
+      and lim["parse_miss_flag"] == 0, str(lim))
+check("limited state keeps trucks=50", lim["trucks_waiting"] == 50, str(lim["trucks_waiting"]))
+
+# FIX 1.1 — missing data-created_at -> ts_synthetic=1, source ts falls back to poll
+syn = scrape_all("<select id='by_name'>" + _opt("Краківець - Корчова", created="")
+                 + "</select>", NOW)[0]
+check("missing created_at -> ts_synthetic=1 + fallback to poll time",
+      syn["ts_synthetic"] == 1 and syn["source_updated_utc"] == "2026-06-17T20:30:00Z",
+      f"ts_synthetic={syn.get('ts_synthetic')} src={syn.get('source_updated_utc')}")
+
+# FIX 1.2 — an unrecognised state must hard-fail (not be miscoded as closed)
+try:
+    scrape_all("<select id='by_name'>" + _opt("Краківець - Корчова", state="невідомий стан")
+               + "</select>", NOW)
+    check("unknown state hard-fails", False, "no exception raised")
+except UnknownStateError:
+    check("unknown state hard-fails", True)
 
 print()
 print("RESULT:", "ALL CHECKS PASS" if not failures else f"{len(failures)} FAILURES: {failures}")

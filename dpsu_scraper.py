@@ -76,13 +76,30 @@ DPSU_NAME_TO_CANONICAL: dict[str, str] = {
 # Real PL road points that are intentionally NOT logged.
 DPSU_NAMES_TO_DROP: set[str] = {"Лудин (пункт контролю)"}  # internal checkpoint, stale since 2024
 
-# data-state value for an open crossing. Anything else is treated as closed.
-OPEN_STATE = "відкритий"
+# FIX 1.2 — explicit `data-state` allowlists (lower-cased for comparison). The
+# old logic was "anything != відкритий ⇒ closed", which miscodes a *limited*
+# state (e.g. обмежений, a trucks-only suspension) as a full closure and injects
+# a closure that never happened into the event layer. Now each state is bucketed
+# explicitly; an UNRECOGNISED state hard-fails (UnknownStateError) so a new state
+# surfaces rather than silently becoming a false closure.
+#
+# Observed in data as of 2026-06-18: only `відкритий` (open). The closed/limited
+# strings below are the documented DPSU vocabulary; any string outside all three
+# sets is treated as unknown and raises.
+OPEN_STATES: set[str] = {"відкритий"}
+CLOSED_STATES: set[str] = {"зачинений", "закритий", "тимчасово зачинений"}
+LIMITED_STATES: set[str] = {"обмежений", "обмежений рух", "частково відкритий"}
 
 
 class UnknownCrossingError(RuntimeError):
     """A poland+car option whose name is neither mapped nor in the drop-set.
     Hard-fails the run so CI opens an issue rather than silently dropping data."""
+
+
+class UnknownStateError(RuntimeError):
+    """A `data-state` string in none of OPEN/CLOSED/LIMITED_STATES. Hard-fails the
+    run (same philosophy as UnknownCrossingError) so a new/renamed state surfaces
+    in CI rather than silently being miscoded as a closure (FIX 1.2)."""
 
 
 def parse_state_of_busy(s: str | None) -> dict:
@@ -167,17 +184,36 @@ def scrape_all(html: str, now: datetime.datetime) -> list[dict]:
         trucks = parsed["trucks_waiting"]
 
         state = (opt.get("data-state") or "").strip()
-        is_closed = state.lower() != OPEN_STATE
-        # FIX 6: give the NULL truck case meaning.
-        closure_flag = 1 if (trucks is None and is_closed) else 0
-        parse_miss_flag = 1 if (trucks is None and not is_closed) else 0
+        state_key = state.lower()
+        if state_key in OPEN_STATES:
+            is_open, is_closed, is_limited = True, False, False
+        elif state_key in CLOSED_STATES:
+            is_open, is_closed, is_limited = False, True, False
+        elif state_key in LIMITED_STATES:
+            is_open, is_closed, is_limited = False, False, True
+        else:
+            # FIX 1.2: do not assume "not open ⇒ closed" — surface the new state.
+            raise UnknownStateError(
+                f"Unrecognised DPSU data-state {state!r} at crossing {crossing_id!r}: "
+                f"not in OPEN_STATES/CLOSED_STATES/LIMITED_STATES. A new/renamed "
+                f"state — classify it in dpsu_scraper.py and record an INCIDENTS.md "
+                f"entry before resuming (do NOT let it become a false closure)."
+            )
+        # FIX 6 + 1.2: closure_flag only for a *full* closure with no truck digits;
+        # a LIMITED state is neither a closure nor a parse-miss (restricted_flag).
+        closure_flag = 1 if (is_closed and trucks is None) else 0
+        parse_miss_flag = 1 if (is_open and trucks is None) else 0
+        restricted_flag = 1 if is_limited else 0
 
         created_kyiv = (opt.get("data-created_at") or "").strip() or None
         updated_utc = kyiv_to_utc(created_kyiv)
+        # FIX 1.1: a missing source timestamp must not masquerade as fresh. Fall
+        # back to our poll time so the truck count is still stored once, but mark
+        # it synthetic so the analysis excludes it from baselines / forward-fill.
+        ts_synthetic = 0
         if updated_utc is None:
-            # No usable source timestamp => no dedupe key (UNIQUE col is NOT NULL).
-            # Fall back to our poll time so the reading is still stored once.
             updated_utc = scraped_at
+            ts_synthetic = 1
 
         reading_age = int(
             (now - datetime.datetime.strptime(updated_utc, "%Y-%m-%dT%H:%M:%SZ")
@@ -199,6 +235,7 @@ def scrape_all(html: str, now: datetime.datetime) -> list[dict]:
                 "state":               state or None,
                 "closure_flag":        closure_flag,
                 "parse_miss_flag":     parse_miss_flag,
+                "restricted_flag":     restricted_flag,
                 "character":           (opt.get("data-character") or "").strip() or None,
                 "category":            (opt.get("data-category") or "").strip() or None,
                 "location":            (opt.get("data-location") or "").strip() or None,
@@ -208,14 +245,21 @@ def scrape_all(html: str, now: datetime.datetime) -> list[dict]:
                 "source_updated_kyiv": created_kyiv,
                 "source_updated_utc":  updated_utc,
                 "reading_age_seconds": reading_age,
+                "ts_synthetic":        ts_synthetic,
                 "state_of_busy_raw":   sob_raw,
             }
         )
+        status = (
+            " CLOSED" if closure_flag
+            else " RESTRICTED" if restricted_flag
+            else " PARSE-MISS" if parse_miss_flag
+            else ""
+        )
         log.info(
-            "%-12s trucks=%s cars=%s rate=%s color=%s age=%dmin%s",
+            "%-12s trucks=%s cars=%s rate=%s color=%s age=%dmin%s%s",
             crossing_id, trucks, parsed["cars_waiting"], parsed["cars_per_hour"],
             records[-1]["load_color"], reading_age // 60,
-            " CLOSED" if closure_flag else (" PARSE-MISS" if parse_miss_flag else ""),
+            status, " [synthetic-ts]" if ts_synthetic else "",
         )
 
     return records
