@@ -59,5 +59,15 @@ def validate_records(records: list) -> bool:
                 rec.get("dpsu_name"),
                 rec.get("state_of_busy_raw"),
             )
+        # A LIMITED/partial state is neither a closure nor a parse miss; surface
+        # it so a partial restriction is visible (and never silently a closure).
+        if rec.get("restricted_flag"):
+            log.warning(
+                "RESTRICTED %s [%s] limited state=%r trucks=%s",
+                rec["crossing_id"],
+                rec.get("dpsu_name"),
+                rec.get("state"),
+                rec.get("trucks_waiting"),
+            )
 
     return True

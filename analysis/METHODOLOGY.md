@@ -196,6 +196,125 @@ finding."** Report the correlation value, never just the best lag.
   peak-lag correlation, event count, quadrant counts.
 - `chart_<crossing>.png` (optional, `--charts`, needs matplotlib) — the two
   normalised series overlaid with decoupling windows shaded.
+- **(PR 2) `cb_decoupling_events.csv`** — the C-vs-B ranked events, kept SEPARATE
+  from `decoupling_events.csv` so the two analyses are never conflated.
+- **(PR 2)** `joined_divergence.csv` / `analysis.db:joined_divergence` gain
+  `dpsu_rank`, `dpsu_stale`, `cb_divergence_rank`, `cb_quadrant` (the existing
+  A-vs-B columns are unchanged, byte-for-byte, for a fixed input).
+- **(PR 2) `chart_cb_<crossing>.png`** (optional) — the DPSU vs eCherga
+  same-direction series, fresh-enough buckets only.
+
+---
+
+## C-vs-B — same-direction (UA→PL) physical-vs-virtual divergence (PR 2)
+
+The A-vs-B divergence above is a **cross-direction asymmetry** proxy (granica
+*outbound* physical vs eCherga *inbound* virtual) — see the Direction caveat. The
+DPSU feed (series C) supplies the missing **UA→PL physical** truck count, so
+C-vs-B is the **same-direction physical-vs-virtual** comparison the project was
+built to make:
+
+| Comparison | Physical leg | Virtual leg | Same flow? |
+|---|---|---|---|
+| **A-vs-B** | granica `wyjazd` (**PL→UA** outbound) | eCherga (**UA→PL** inbound) | **No** — opposing flows |
+| **C-vs-B** | DPSU trucks queued (**UA→PL** physical) | eCherga (**UA→PL** virtual) | **Yes** — same flow |
+
+`cb_divergence_rank = dpsu_rank − virt_rank` (DPSU physical minus eCherga
+virtual), built exactly like the A-vs-B `divergence`. `cb_quadrant` uses the same
+per-crossing `--elevated-pct` threshold, with physical-vs-virtual labels:
+
+| `cb_quadrant` | Meaning |
+|---|---|
+| `aligned_busy` | both elevated |
+| `physical_only` | real trucks on the ground not reflected in the booking queue |
+| `virtual_only` | booking queue inflated vs what's physically present |
+| `aligned_quiet` | neither elevated |
+
+### Percentile baseline — full native series, per feed
+
+**Decision: each feed's percentile baseline is its own full native distribution.**
+For DPSU specifically (`dpsu_rank`), the baseline is each crossing's **distinct
+native readings** — one weight per real `source_updated_utc` — **NOT** the
+forward-filled bucket series. Forward-fill repeats one reading across every bucket
+until the next update; a reading that precedes a long gap would otherwise be
+counted dozens of times and distort the distribution. We rank against the true
+reading distribution, then *assign* those ranks to the fresh-enough forward-filled
+buckets. `ts_synthetic=1` rows (a poll-time fallback when the source timestamp was
+absent) are excluded from the baseline and the forward-fill entirely.
+
+> **Open methodology inconsistency (recorded, not fixed here).** `phys_rank` /
+> `virt_rank` (A-vs-B) currently baseline over each crossing's **paired complete
+> buckets** (buckets where both granica and eCherga have a reading), not the full
+> native per-feed series. `dpsu_rank` (this PR) baselines over the full native
+> readings. The two are therefore not built identically. Re-baselining
+> `phys_rank`/`virt_rank` over their full native series is deliberately **out of
+> scope for this PR** (it would move the existing A-vs-B numbers); it is logged
+> here as a known inconsistency to resolve in a dedicated PR.
+>
+> A consequence worth stating: because `cb_divergence_rank` reuses the existing
+> `virt_rank`, C-vs-B is only computed on buckets that are also granica-`complete`
+> and on crossings past `--min-buckets`. Decoupling C-vs-B from granica
+> availability would require the virt re-baselining above.
+
+### Staleness cutoff — `--dpsu-max-age-hours` (default 6 h)
+
+DPSU is a coarse, **batched, staggered** feed (recon: ~2.5–3 h refresh that
+occasionally skips a crossing). Forward-filling it onto a 1 h grid is only honest
+for a bounded age. A bucket whose `dpsu_reading_age_s` exceeds the cutoff is
+**excluded from `dpsu_rank` and the C-vs-B divergence** (`dpsu_rank=None`,
+`dpsu_stale=True`); the **raw** `dpsu_trucks` / `dpsu_reading_age_s` columns are
+kept unfiltered for transparency.
+
+- **Default 6 h** = ~2× the nominal ~3 h refresh: loose enough to tolerate the
+  staggered/skipped batches, tight enough to drop clearly-stale fills.
+- It is a **tunable methodology parameter**, not a magic constant.
+- The run prints the **measured** excluded fraction:
+  *"freshness cutoff = 6.0 h: N/M filled buckets within cutoff (X% excluded as
+  stale)."* **Measured value: pending** — as of 2026-06-18 the committed DPSU
+  readings (2026-06-18) and the granica/eCherga history (≤ 2026-06-17) do not yet
+  overlap, so 0 buckets carry a fill. Re-run once the loggers accumulate
+  overlapping data and record N/M/X% here.
+- **Follow-up (don't block):** once a few weeks exist, sanity-check the 6 h
+  default against the real per-crossing distribution of inter-update gaps.
+
+### Sufficiency gate for `dpsu_rank`
+
+A crossing needs ≥ `--min-buckets` **distinct native DPSU readings** before its
+`dpsu_rank` is trusted (same philosophy as the A-vs-B `min_buckets` gate); below
+that the percentile distribution is degenerate and `dpsu_rank` is left `None`.
+
+### Standing limitation (label this in the writeup)
+
+C is a **coarse ~3 h feed forward-filled onto a finer grid**. The C-vs-B
+divergence is **only trusted within the freshness cutoff**; stale fills are
+reported raw but never ranked or compared.
+
+### Next analytical step (NOT in this PR)
+
+Does the virtual queue (B) **lead** the physical queue (C) by some hours — you
+book before you arrive? That lead/lag question reuses the existing `lag_hours`
+machinery but against the C-vs-B pair, and is its own PR. Not built here.
+
+---
+
+## Direction validation (`analysis/direction_check.py`, PR 2)
+
+Co-movement of DPSU (C) with eCherga (B) alone cannot prove C is UA→PL — a bad
+border day lifts both directions together. The discriminator is the **opposite**
+direction: granica (A) is the PL→UA physical wait at the same crossing. The script
+reports, per crossing: same-direction `r(C,B)`, opposite-direction `r(C,A)`, a
+**verdict** (flag if `|r(C,A)| > |r(C,B)|` — tracks the opposite direction more
+tightly), and a **magnitude sanity** check (the westbound UA→PL exit backlog
+reaches thousands of trucks — recon's ~2,251 at Dorohusk — so large counts
+corroborate the direction).
+
+- **Regenerate:** `python -m analysis.direction_check [--bucket-hours 1]` where
+  `data/{dpsu,echerha,queues}.db` are present.
+- **Result: pending data.** As of 2026-06-18 the overlap is 0 buckets on both
+  legs, so every crossing returns *"insufficient overlap — cannot judge yet."*
+  The magnitude leg is already informative (Dorohusk ~2,071; near-zero at
+  kroscienko/malhowice). Re-run once C overlaps A and B, and record the verdicts
+  here.
 
 ---
 
@@ -235,7 +354,8 @@ overclaiming from a thin window.
 | `--bucket-hours` | 1.0 | common grid bucket size |
 | `--elevated-pct` | 75 | per-crossing "elevated" threshold |
 | `--decouple-pct` | 90 | per-crossing `|divergence|` event threshold |
-| `--min-buckets` | 24 | min complete buckets before a crossing gets stats |
+| `--min-buckets` | 24 | min complete buckets before a crossing gets stats (also the min distinct native DPSU readings before `dpsu_rank` is trusted) |
+| `--dpsu-max-age-hours` | 6.0 | C-vs-B freshness cutoff: drop DPSU fills older than this from `dpsu_rank` / C-vs-B (≈2× the ~3 h refresh) |
 | `--lag-hours` | 24 | cross-correlation lag scan (±) |
 | `--virtual-metric` | `virtual_wait_s` | or `vehicles_waiting` |
 | `--truck-wait-agg` | `max` | collapse eCherga truck sub-queue waits: `max`/`mean` |
