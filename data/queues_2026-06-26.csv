@@ -26,3 +26,12 @@ id,scraped_at,crossing_id,crossing_name,trucks_exit_min,trucks_entry_min,cars_ex
 1370,2026-06-26T05:01:00Z,malhowice,Małhowice,,,0,,0,,2026-6-26,5
 1369,2026-06-26T05:01:00Z,medyka,Medyka,660,,0,,0,,2026-6-26,5
 1364,2026-06-26T05:01:00Z,zosin,Zosin,120,,60,,0,,2026-6-26,5
+1376,2026-06-26T08:01:00Z,budomierz,Budomierz,0,,0,,30,,2026-6-26,8
+1374,2026-06-26T08:01:00Z,dolhobyczow,Dołhobyczów,60,,0,,0,,2026-6-26,8
+1372,2026-06-26T08:01:00Z,dorohusk,Dorohusk,1140,,,,120,,2026-6-26,8
+1375,2026-06-26T08:01:00Z,hrebenne,Hrebenne,1140,,0,,0,,2026-6-26,8
+1377,2026-06-26T08:01:00Z,korczowa,Korczowa,660,,60,,60,,2026-6-26,8
+1380,2026-06-26T08:01:00Z,kroscienko,Krościenko,0,,0,,0,,2026-6-26,8
+1379,2026-06-26T08:01:00Z,malhowice,Małhowice,,,0,,0,,2026-6-26,8
+1378,2026-06-26T08:01:00Z,medyka,Medyka,600,,0,,120,,2026-6-26,8
+1373,2026-06-26T08:01:00Z,zosin,Zosin,120,,60,,60,,2026-6-26,8
