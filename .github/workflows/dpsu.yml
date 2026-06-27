@@ -41,6 +41,12 @@ jobs:
 
       - name: Run DPSU scraper
         id: scrape
+        env:
+          # Routes the fetch through a clean-ASN VPS proxy so dpsu.gov.ua's
+          # Cloudflare layer doesn't 403 the GitHub runner's Azure IP. Set this
+          # repo secret to http://user:pass@<vps-ip>:<port>. If unset, the
+          # scraper connects directly (and will 403 on a GitHub runner).
+          DPSU_PROXY_URL: ${{ secrets.DPSU_PROXY_URL }}
         run: python dpsu_scraper.py
         continue-on-error: true
 
