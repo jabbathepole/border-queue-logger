@@ -11,15 +11,21 @@ Run directly (python dpsu_scraper.py) or via GitHub Actions.
 
 HTTP NOTE: there is NO API. dpsu.gov.ua/uk/map is a server-rendered page; every
 crossing's live figures ship inline as data-* attributes on <option> elements
-under <select id="by_name">. We fetch the page and read those attributes. Unlike
-eCherga there is no TLS fingerprinting, so plain `requests` works; we keep the
-single-retry/backoff + issue-on-failure pattern anyway. See RECON_dpsu_map.md.
+under <select id="by_name">. We fetch the page and read those attributes. There is
+no TLS fingerprinting (unlike eCherga), so plain `requests` works from a normal IP.
+BUT the site is behind Cloudflare and 403s the big-cloud ASNs that GitHub-hosted
+runners use (Azure/AWS/GCP) — it does NOT block datacenters broadly (a small/regional
+hosting IP passes fine). So in CI we route the fetch through DPSU_PROXY_URL (a tiny
+proxy on a clean-ASN VPS); when that env var is unset (e.g. local runs from a normal
+IP) we go direct. Single-retry/backoff + issue-on-failure pattern throughout.
+See RECON_dpsu_map.md.
 
 Scope: public, no-login /uk/map surface only. robots.txt allows all. Data is
 CC BY 4.0 (see README attribution).
 """
 import datetime
 import logging
+import os
 import re
 import sys
 import time
@@ -137,11 +143,24 @@ def _to_float(v):
         return None
 
 
+def _proxies() -> dict | None:
+    """Route the fetch through DPSU_PROXY_URL if set (a clean-ASN VPS proxy, needed
+    to get past Cloudflare's big-cloud-ASN block from GitHub runners). Unset =>
+    direct connection (fine from a normal/residential IP for local runs)."""
+    url = os.getenv("DPSU_PROXY_URL")
+    return {"http": url, "https": url} if url else None
+
+
 def fetch_map_html() -> str:
     """GET /uk/map, retrying transient failures with backoff."""
+    proxies = _proxies()
+    if proxies:
+        log.info("Fetching via DPSU_PROXY_URL proxy")
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            resp = requests.get(MAP_URL, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            resp = requests.get(
+                MAP_URL, headers=HEADERS, timeout=REQUEST_TIMEOUT, proxies=proxies
+            )
             resp.raise_for_status()
             return resp.text
         except Exception as exc:
