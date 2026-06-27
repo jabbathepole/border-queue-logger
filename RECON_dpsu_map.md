@@ -7,6 +7,36 @@
 
 ---
 
+## ⚙️ Operational update (2026-06-27) — BUILT & LIVE (Option A)
+
+> The recon's build decision landed on **Option A (DPSU-direct)** and the logger is
+> now **operational on master**. Two things the recon (run from a residential IP)
+> did **not** surface, discovered once it ran in CI:
+>
+> 1. **Cloudflare blocks the GitHub runner's IP.** `dpsu.gov.ua` sits behind
+>    Cloudflare, which 403s the big-cloud ASNs GitHub-hosted runners egress from
+>    (Azure confirmed; AWS/GCP same class). Headers/UA/TLS don't help — it's an
+>    **ASN/IP block**, not a fingerprint block. It does **not** block datacenters
+>    broadly (a small/regional hosting IP returns 200), so §9's "plain
+>    curl/requests work" holds only from a normal/residential IP. **Residential
+>    proxies were a dead end** (IPRoyal gates `.gov` behind identity + $500 spend;
+>    DataImpulse blocks government/banking).
+>    **Fix:** `dpsu_scraper.py` routes the fetch through `DPSU_PROXY_URL` (repo
+>    secret) — a tiny auth'd `tinyproxy` on a clean-ASN Ukrainian VPS, host-filtered
+>    to `dpsu.gov.ua` only. Unset ⇒ direct (unchanged local behaviour). PR #92.
+> 2. **GitHub's `schedule:` is unreliable** (same as the other two loggers). The
+>    `*/30` cron is kept as a harmless backstop; the real trigger is a
+>    **cron-job.org** dispatcher hitting the `workflow_dispatch` API
+>    (`.../actions/workflows/dpsu.yml/dispatches`, body `{"ref":"master"}`, every
+>    30 min, same `logger-cron` PAT — repo Actions:RW already covers `dpsu.yml`).
+>    See `RECON_echerha.md` §"Fix" for the identical pattern + the literal-`Bearer`
+>    header gotcha.
+>
+> Net: the §10 cadence caveat stands (~3 h source refresh, dedup handles
+> over-sampling), but the logger is collecting reliably.
+
+---
+
 ## 0. Context you need first (cold-start)
 
 - **Repo:** `border-queue-logger` (github.com/jabbathepole/border-queue-logger).
@@ -36,7 +66,7 @@ source: DPSU interactive border map
 url: https://dpsu.gov.ua/uk/map
 access_method: HTML scrape          # NOT an API — data is inline in the page HTML
 http: GET, no params, no body, no auth, no CSRF needed
-anti_bot: none observed (plain curl/requests work; no TLS fingerprinting)
+anti_bot: none from residential IP; BUT Cloudflare 403s big-cloud ASNs (Azure/GitHub) — CI needs DPSU_PROXY_URL via clean-ASN VPS (see Operational update)
 robots_txt: allows all (Disallow: empty)
 license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 direction: UA->PL (exit from Ukraine)   # inferred from data, no explicit field
@@ -243,6 +273,12 @@ challenge. `/ua/map` → 301 to `/uk/map` (locale canonicalisation, not a block)
 **No TLS fingerprinting** (unlike eCherga's Akamai) — plain `curl`/`requests`
 work; no need to shell out. Keep an eCherga-style single-retry/backoff +
 issue-on-failure anyway; intermittent `/ua/` blocks were noted historically.
+
+> **⚠ Correction (2026-06-27, from CI):** this section was probed from a residential
+> IP. In production the site **does** block — Cloudflare 403s GitHub's runner ASN
+> (Azure), though *not* datacenters broadly (a UK hosting IP got 200). It's an
+> IP/ASN block, not TLS/headers. The logger now egresses via `DPSU_PROXY_URL` (a
+> clean-ASN VPS proxy). See the **Operational update** callout at the top.
 
 ---
 
