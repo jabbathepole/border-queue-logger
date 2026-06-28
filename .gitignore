@@ -5,4 +5,5 @@ __pycache__/
 scraper.log
 echerha_scraper.log
 dpsu_scraper.log
+monthly_traffic_fetch.log
 .venv/
