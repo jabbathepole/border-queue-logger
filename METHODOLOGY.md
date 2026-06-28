@@ -3,6 +3,24 @@
 Notes on how each data series is collected and how they may (and may not) be
 combined. Read alongside the per-series RECON_*.md documents.
 
+## Two kinds of log — instrument vs. world (read this first)
+
+The repo keeps two deliberately separate event records. The split is by *cause*,
+not severity, and conflating them would corrupt analysis:
+
+- **Instrument events → `INCIDENTS.md`.** Faults in our *measurement apparatus*:
+  scraper bugs, schema drift, GitHub Actions cadence gaps (e.g. INC-001 the
+  granica `rok` error, INC-002 schedule-not-firing). These affect whether the
+  series was *recorded correctly*.
+- **World events → `data/corridor_events.csv`.** Real-world disruptions at the
+  border itself: blockades, strikes, policy changes, closures. These affect what
+  the series was *measuring*. See `data/corridor_events.README.md` and
+  `RECON_event_log.md`.
+
+A spike caused by an instrument fault must be discounted; a spike caused by a
+world event is signal to be explained. Keeping the two in different files makes
+that distinction mechanical rather than a judgment call at analysis time.
+
 ## Series overview
 
 | Series | Source | Direction | Metric | Cadence |
@@ -11,6 +29,49 @@ combined. Read alongside the per-series RECON_*.md documents.
 | B — eCherga | back.echerha.gov.ua | UA→PL (westbound) | **virtual** queue (seconds, booked count) | ~30 min |
 | C — DPSU | dpsu.gov.ua/uk/map | UA→PL (westbound) | physical **trucks waiting** (count) | sub-hourly |
 | **Baseline** — monthly traffic | **dane.gov.pl 2708** | **both** (z RP / do RP) | monthly **vehicle counts** | **monthly** |
+
+## Corridor event log (`data/corridor_events.csv`)
+
+A hand-curated, sourced record of real-world freight disruptions used to annotate
+anomalies across Series A–C — the interpretive backbone that turns an unexplained
+spike into a natural experiment, and the layer that unlocks the C-vs-B divergence
+question (do physical and virtual queues decouple precisely inside blockade
+windows?). It is the repo's **only hand-curated, non-reproducible** layer, which
+inverts several live-logger rules: it is **committed** (irreplaceable, vs the
+re-derivable 2708 baseline which is gitignored), lives as **hand-editable CSV**
+(not a DB), is **sourced not remembered** (every row cited), and is governed by a
+**pre-registered inclusion rule** that removes curation bias at capture time.
+Schema, rubric, and the source watchlist are in `data/corridor_events.README.md`;
+design rationale in `RECON_event_log.md`.
+
+### No-contamination property (a provenance strength)
+
+The data window is `[2026-06-12 → today]` — granica's first observation is the
+earliest of the four series. The whole window **postdates the model knowledge
+cutoff (Jan 2026)**, so model-memory leakage into the log is not merely forbidden,
+it is **impossible**: every row is guaranteed live-sourced. Backfill never goes
+earlier than 2026-06-12 — events predating series collection cannot confound data
+that does not exist.
+
+### What 16 days does and does not support
+
+The window supports the **structural-asymmetry** read (true at any window length)
+but **no capacity-trend claim** (far too short). A near-empty log is itself a
+finding: it characterises the baseline as **normal operations** — a caveat to
+state, not to hide. As of 2026-06-28 the file is header-only: a live survey found
+no qualifying freight-disruption event in-window (two candidates — a Medyka
+bus-lane rebuild and a seasonal passenger-traffic surge — were correctly excluded
+by the freight-only inclusion rule; see the README).
+
+### Joining
+
+`events_log.events_for(events, crossing, ts)` returns every event whose scope
+covers `crossing` and whose date window contains `ts`. Scope is either explicit
+canonical codes or one of two system-wide sentinels — `corridor` (asserted
+system-wide) vs `unknown` (scope not yet investigated) — both of which annotate
+all crossings but stay distinguishable in the raw row. Materiality is a query-time
+filter (`include_below_floor=False`), never a deletion: short events are tagged
+`below_materiality_floor`, not dropped, so filtered views stay recomputable.
 
 ## Monthly traffic baseline (dataset 2708)
 
