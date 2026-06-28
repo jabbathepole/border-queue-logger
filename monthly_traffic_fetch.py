@@ -302,6 +302,12 @@ def build_column_map(ws) -> dict:
 
         vt = CATEGORY_TO_VEHICLE_TYPE.get(lbl)
         if vt:
+            # REGISTRATION EXTENSION POINT. "total" is the category's single
+            # all-registrations-all-directions cell. "foreign"/"polish" are the
+            # per-direction columns. registration='all' = foreign+polish (below).
+            # MUTUAL EXCLUSIVITY: 'all' already == foreign+polish, so a future
+            # split that emits 'foreign'/'polish' rows must NEVER be summed
+            # together with 'all' — doing so doubles every total.
             vehicles[vt] = {
                 "total": s,
                 "foreign": {"do_RP": s + 1, "z_RP": s + 2},
@@ -335,6 +341,10 @@ def _extract_crossing_values(ws, row: int, cm: dict) -> dict:
         for direction in ("z_RP", "do_RP"):
             f = _cell_int(ws.cell(row, cols["foreign"][direction]).value)
             p = _cell_int(ws.cell(row, cols["polish"][direction]).value)
+            # registration='all' for this direction = foreign(obce) + Polish(polskie).
+            # If a future extension also stores 'foreign'/'polish' rows, treat them
+            # as a SEPARATE view of this same number — never aggregate 'all' with
+            # 'foreign'/'polish' (it would double-count). See METHODOLOGY.md.
             dir_all[direction] = None if (f is None and p is None) else (f or 0) + (p or 0)
             values[(vt, direction)] = dir_all[direction]
         # integrity: RAZEM (all dir, all reg) should equal z_RP_all + do_RP_all
@@ -412,6 +422,8 @@ def extract_sheet(ws, resource_id: str, fetched_at: str, fallback_year: int) -> 
                     "month": month,
                     "vehicle_type": vt,
                     "direction": direction,
+                    # 'all' == foreign+polish; mutually exclusive with any future
+                    # 'foreign'/'polish' rows — never sum across registration.
                     "registration": "all",
                     "count": count,
                     "joint_reported_with": joint,

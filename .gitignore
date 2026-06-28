@@ -7,3 +7,11 @@ echerha_scraper.log
 dpsu_scraper.log
 monthly_traffic_fetch.log
 .venv/
+
+# Monthly-traffic baseline: derived data is script-populated and re-fetchable
+# (dataset 2708 is CC0, monthly, restated by immutable resource id), so a
+# committed snapshot would go stale on the next backfill. Ignore the specific
+# files only — the live-logger DBs (queues/echerha/dpsu) stay tracked, and the
+# raw XLSX in data/raw_traffic/ is kept as a stable per-vintage provenance anchor.
+data/monthly_traffic.db
+data/monthly_traffic.csv

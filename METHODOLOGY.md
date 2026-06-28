@@ -39,6 +39,12 @@ cleaner licence.
   the Series-A denominator; `do_RP` (entry to Poland = UA→PL **westbound**) is a
   bonus volume denominator for normalising Series C / DPSU. So this one baseline
   supports both the eastbound and westbound physical series.
+- **Direction validation (`z_RP` is not transposed).** The April 2026 eastbound
+  truck volume (`truck`/`z_RP`) ranks Dorohusk 17,683 > Korczowa 10,821 > Hrebenne
+  8,706 > Medyka 6,120 … Małhowice 0 — the same crossing ordering as where Series-A
+  (granica) eastbound waits are highest. That agreement confirms `z_RP` is the
+  PL→UA export direction and has not been swapped with `do_RP`. (This is the
+  direction-validation for this layer, analogous to `direction_check` for Series C.)
 - **Vehicle scope (current):** `truck` (samochody ciężarowe) and `total` (RAZEM
   łączny ruch graniczny), registration `all`. Cars/buses and the foreign/Polish
   (obce/polskie) registration split are schema-ready but not yet populated.
@@ -68,3 +74,9 @@ cleaner licence.
 - **Crossing names:** mapped from the 2708 row labels (the Polish, left-of-dash
   name). Dataset 2090 ("Wykaz przejść granicznych") is **not** used — recon found
   it stale (only 4 of 9 UA road crossings); the 2708 file is the better authority.
+- **Registration dimension — never sum across it.** `registration='all'` is the
+  per-direction total and **already equals** foreign (`obce`) + Polish (`polskie`).
+  The foreign/Polish split is schema-ready but unpopulated; when it is added,
+  `'all'` and `{'foreign','polish'}` are **mutually exclusive views of the same
+  figure**, so rows must never be summed across the registration dimension —
+  summing `all + foreign + polish` doubles every total.
