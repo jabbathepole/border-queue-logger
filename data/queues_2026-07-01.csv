@@ -62,3 +62,12 @@ id,scraped_at,crossing_id,crossing_name,trucks_exit_min,trucks_entry_min,cars_ex
 1946,2026-07-01T17:20:00Z,malhowice,Małhowice,,,0,,0,,2026-7-1,17
 1945,2026-07-01T17:20:00Z,medyka,Medyka,480,,0,,0,,2026-7-1,17
 1940,2026-07-01T17:20:00Z,zosin,Zosin,120,,60,,0,,2026-7-1,17
+1952,2026-07-01T20:02:00Z,budomierz,Budomierz,120,,0,,0,,2026-7-1,20
+1950,2026-07-01T20:02:00Z,dolhobyczow,Dołhobyczów,0,,0,,0,,2026-7-1,20
+1948,2026-07-01T20:02:00Z,dorohusk,Dorohusk,900,,,,0,,2026-7-1,20
+1951,2026-07-01T20:02:00Z,hrebenne,Hrebenne,540,,0,,0,,2026-7-1,20
+1953,2026-07-01T20:02:00Z,korczowa,Korczowa,240,,120,,0,,2026-7-1,20
+1956,2026-07-01T20:02:00Z,kroscienko,Krościenko,0,,0,,0,,2026-7-1,20
+1955,2026-07-01T20:02:00Z,malhowice,Małhowice,,,60,,0,,2026-7-1,20
+1954,2026-07-01T20:02:00Z,medyka,Medyka,540,,0,,0,,2026-7-1,20
+1949,2026-07-01T20:02:00Z,zosin,Zosin,120,,30,,0,,2026-7-1,20
