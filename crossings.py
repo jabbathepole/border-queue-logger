@@ -25,6 +25,33 @@ CANONICAL_NAMES: dict[str, str] = {
     "kroscienko":  "Krościenko",
 }
 
+# Freight regime per crossing — the "nine canonical crossings" span four distinct
+# truck-queue regimes, and lumping them together conflates a 2,000-truck backlog
+# at Dorohusk with a crossing that has no truck queue at all. Tiers (derived
+# 2026-07-08 from the eCherga class map above, clean-window (>=2026-06-27) median
+# DPSU/eCherga truck queues, and dataset-2708 April-2026 truck volumes):
+#
+#   heavy       loaded >=7.5 t queue present; large physical backlog
+#               (dorohusk med C ~2051, korczowa ~398, hrebenne ~448, medyka ~570;
+#                2708 z_RP trucks 17.7k / 10.8k / 8.7k / 6.1k).
+#   restricted  no loaded >=7.5 t queue — only le_7,5 t + empty sub-queues
+#               (zosin med C ~329, dolhobyczow ~284; 2708 ~4.3k / 4.0k). Freight
+#               scope is genuinely narrower here, not just quieter.
+#   marginal    degenerate truck queue: le_7,5 t only with near-zero medians
+#               (budomierz med C ~6, kroscienko ~0), or NO truck queue at all
+#               (malhowice = bus queue id 102 only). Ranks/correlations here are
+#               noise (kroscienko clean-window r(C,B) ~ -0.07), so per-crossing
+#               statistics are computed but flagged degenerate, never headlined.
+#
+# Rule: report per-crossing statistics for heavy + restricted tiers; compute
+# marginal-tier statistics but flag them degenerate. See analysis/METHODOLOGY.md
+# "Crossing tiers" for the full evidence table.
+CROSSING_TIER: dict[str, str] = {
+    "dorohusk": "heavy", "korczowa": "heavy", "hrebenne": "heavy", "medyka": "heavy",
+    "zosin": "restricted", "dolhobyczow": "restricted",
+    "budomierz": "marginal", "kroscienko": "marginal", "malhowice": "marginal",
+}
+
 # eCherga checkpoint id -> canonical crossing id.
 # Captured during reconnaissance on 2026-06-14 from
 # https://back.echerha.gov.ua/api/v4/workload/{1=trucks,2=buses}
