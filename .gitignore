@@ -8,6 +8,10 @@ dpsu_scraper.log
 monthly_traffic_fetch.log
 .venv/
 
+# Transient per-run tripwire written by the eCherga queue-set guard
+# (echerha_queue_guard.py) — a CI signal, never committed data.
+queue_guard_alert.txt
+
 # Monthly-traffic baseline: derived data is script-populated and re-fetchable
 # (dataset 2708 is CC0, monthly, restated by immutable resource id), so a
 # committed snapshot would go stale on the next backfill. Ignore the specific

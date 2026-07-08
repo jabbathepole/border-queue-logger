@@ -31,6 +31,7 @@ from crossings import (
     map_canonical,
 )
 from echerha_db import export_daily_csv, init_db, insert_records
+from echerha_queue_guard import run_guard
 from echerha_validate import validate_records
 
 logging.basicConfig(
@@ -113,8 +114,13 @@ def fetch_workload(carrier_type: int) -> dict:
             time.sleep(wait)
 
 
-def scrape_all(now: datetime.datetime) -> list[dict]:
+def scrape_all(now: datetime.datetime) -> tuple[list[dict], dict[int, dict]]:
+    """Returns (records, seen). `seen` maps every Poland-border checkpoint id in
+    the payload -> its metadata, INCLUDING ids that don't map to a canonical
+    crossing (so the queue-set guard can flag a brand-new sub-queue) and ids whose
+    sub-queue is paused (the guard keys on presence, not activity)."""
     records: list[dict] = []
+    seen: dict[int, dict] = {}
     scraped_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for carrier_type in CARRIER_TYPES:
@@ -129,6 +135,15 @@ def scrape_all(now: datetime.datetime) -> list[dict]:
             echerha_id = cp.get("id")
             title = cp.get("title") or ""
             crossing_id = map_canonical(echerha_id, title)
+            vehicle_class = classify_vehicle(title, cp.get("for_vehicle_type"))
+            # Record presence for the queue-set guard before the mapping gate, so
+            # a new/unmapped sub-queue is still seen (and thus flagged).
+            seen[echerha_id] = {
+                "crossing_id": crossing_id,
+                "vehicle_class": vehicle_class,
+                "echerha_title": title,
+                "carrier_type": carrier_type,
+            }
             if crossing_id is None:
                 log.warning(
                     "Unmapped Poland checkpoint id=%s title=%r — add it to crossings.py",
@@ -144,7 +159,7 @@ def scrape_all(now: datetime.datetime) -> list[dict]:
                     "crossing_name":    CANONICAL_NAMES[crossing_id],
                     "echerha_id":       echerha_id,
                     "echerha_title":    title,
-                    "vehicle_class":    classify_vehicle(title, cp.get("for_vehicle_type")),
+                    "vehicle_class":    vehicle_class,
                     "vehicle_type":     cp.get("for_vehicle_type"),
                     "queue_flow":       cp.get("queue_flow"),
                     "is_paused":        int(bool(cp.get("is_paused"))),
@@ -158,7 +173,7 @@ def scrape_all(now: datetime.datetime) -> list[dict]:
                 }
             )
 
-    return records
+    return records, seen
 
 
 def main() -> None:
@@ -168,7 +183,7 @@ def main() -> None:
     log.info("=== eCherga scrape run starting %s UTC ===", now_utc.isoformat())
 
     try:
-        records = scrape_all(now_utc)
+        records, seen = scrape_all(now_utc)
     except Exception:
         log.error("Scrape aborted — API unreachable or structure changed")
         sys.exit(1)
@@ -176,6 +191,19 @@ def main() -> None:
     if not validate_records(records):
         log.error("Validation failed — aborting insert")
         sys.exit(1)
+
+    # Queue-set guard — runs BEFORE insert so the DB's most recent scrape is the
+    # previous-scrape debounce state. Purely advisory: it logs / drops an alert
+    # file and NEVER blocks ingestion, so any failure inside it is swallowed.
+    try:
+        run_guard(
+            set(seen),
+            present_meta=seen,
+            scraped_at=now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            db_path=DB_PATH,
+        )
+    except Exception as exc:  # a guard bug must never cost us a scrape
+        log.warning("queue-set guard skipped (non-fatal): %s", exc)
 
     init_db(DB_PATH)
     insert_records(DB_PATH, records)
