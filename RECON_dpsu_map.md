@@ -241,6 +241,21 @@ would over-sample; **dedupe inserts on `created_at`** and store native
 resolution. (A multi-hour confirmatory probe would pin the exact period; the
 two timestamp generations already indicate ~3 h.)
 
+> **Addendum — overnight dead zone (2026-07-08, supersedes the "~2.5–3 h,
+> occasionally skips" characterisation above).** With 11 days of clean-window
+> data (`>= 2026-06-27`) the cadence is now measured directly by
+> [`analysis/dpsu_coverage.py`](analysis/dpsu_coverage.py), and it is **not** a
+> uniform ~3 h feed. **Native readings occur only in UTC hours 03–21; there are
+> ZERO readings 22:00–02:59** — a recurrent overnight dead zone. The daytime
+> inter-reading gap has a **~3.1 h median** (matching the original probe), but the
+> evening→morning gap runs **~9 h** (≈18:0x → 03:0x) and occasionally ~18 h on a
+> full-day skip. Effective rate ≈ **4–5 native readings/day** — about half what a
+> flat "~3 h refresh" implies. Consequences: Series C is **daytime-conditioned**,
+> the 6 h C-vs-B freshness cutoff structurally drops most night buckets (~58 % of
+> stale exclusions are in 22:00–05:59 UTC), and **no diurnal claim may rest on C**.
+> This is documented **normal source behaviour** — it is characterised, **not**
+> alerted on. See `analysis/METHODOLOGY.md` §"Diurnal coverage".
+
 ---
 
 ## 7. Direction — UA→PL (confirmed from data)
