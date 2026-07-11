@@ -31,6 +31,30 @@ predating series collection cannot confound data that does not exist.
 **no capacity-trend claim**. A near-empty log is itself a finding: it characterises
 the baseline as **normal operations**, a caveat to state, not to hide.
 
+### Pre-window context (NOT log rows)
+
+The near-empty log calls the window "normal operations" — but that normal is a
+**post-blockade** normal, and the reader should know it. Since late 2023 this
+corridor has seen recurring Polish farmer/carrier blockades of freight. Most
+recently, a **carrier blockade ran from early November 2025 into 2026**, with
+multi-thousand-truck queues and reported waits of **~30 days at Dorohusk by early
+January 2026**; normal operations were restored by spring 2026 — a few months
+before this window opens. So "normal" here means *recovered-from-blockade normal*,
+not *never-disrupted*.
+
+These events **predate 2026-06-12 and are therefore NOT rows** in
+`corridor_events.csv` — per the no-backfill rule above, we do not log events that
+cannot confound data we did not yet have. They are recorded here as **context
+only**, to keep the baseline honestly labelled.
+
+Leads (aggregator-grade; **both returned HTTP 404 on a 2026-07-08 check** — treat
+as unverified pointers, not citations):
+<!-- UNVERIFIED — HTTP 404 on 2026-07-08; maintainer to confirm/replace -->
+- L3 <https://www.visahq.com/news/2025-12-20/pl/over-4000-trucks-stuck-at-polish-ukrainian-border-as-carrier-blockade-drags-on/> — carrier blockade from 6 Nov 2025, 4,000+ trucks.
+- L4 <https://www.visahq.com/news/2026-01-05/pl/truck-queues-top-30-days-as-polish-carrier-blockade-escalates-at-ukrainian-border/> — 30-day waits at Dorohusk, 4 Jan 2026.
+<!-- maintainer: upgrade to primary (PAP / Ukrinform / SG komunikaty) per source standards -->
+Background overview (context only, never a `source_url`): <https://en.wikipedia.org/wiki/Poland%E2%80%93Ukraine_border_crisis> (verified 2026-07-08, HTTP 200).
+
 ---
 
 ## Inclusion criterion (pre-registered — apply mechanically)
@@ -159,3 +183,49 @@ DPSU Telegram is the one channel frequent + structured enough to tempt automatio
 it is **left manual for now** (a notice-watcher would be a separate decision).
 Aggregators (kordon.customs.gov.ua, nakordoni.com.ua) are for *locating* primaries
 only — never the cited `source_url`.
+
+---
+
+## Survey protocol — pre-register the *looking*, not just the rule
+
+The **inclusion rule** above removes curator bias at *capture* time. But *when* we
+look is itself a bias surface: surveying only when a chart spikes would
+manufacture an anomaly-correlated log. So the survey **cadence** is pre-registered
+too, and every survey — including the empty ones — is recorded in
+[`corridor_events.surveys.csv`](corridor_events.surveys.csv)
+(`survey_date, window_checked, sources_checked, result, rows_added, notes`).
+
+- **Fixed weekly cadence: every Monday.** Walk the full source watchlist above
+  for the whole window, whether or not anything looked unusual that week.
+- **Nil returns are MANDATORY rows.** A week with no qualifying event still gets a
+  `result=nil, rows_added=0` row. This is not bookkeeping for its own sake: **the
+  dated nil entries are the evidential basis of the "normal operations" baseline
+  claim.** "We found nothing" only means something if we can show we *looked*, on
+  a schedule fixed in advance, and wrote down that we found nothing.
+- **Ad-hoc anomaly-triggered checks are allowed but must be distinguishable.** If a
+  spike prompts an off-cadence look, log it too — with `notes: anomaly-triggered`
+  — so it never masquerades as part of the unbiased weekly cadence.
+- **Triage open GitHub issues on this repo** as part of each weekly survey. This
+  closes the detection-failure loop from INC-003 (the DPSU 403 blackout, where 71
+  auto-opened failure issues went untriaged for 8 days): an unattended run of
+  scraper-failure issues is caught within a week, not never.
+
+The file ships seeded with exactly one row — the documented **2026-06-28** survey
+(nil result, two worked exclusions, Glavcom aggregator nil) transcribed from the
+"Current contents" section above.
+
+### Watchlist additions
+
+- **EES (Entry/Exit System) rollout.** The EU EES is being switched on
+  crossing-by-crossing on this border since ~Nov 2025; it becomes freight-relevant
+  once driver biometric registration extends to truck lanes (added dwell time is a
+  real queue driver). Channels: eu-LISA, MSWiA / Straż Graniczna komunikaty.
+  Leads (verified 2026-07-08, HTTP 200):
+  L5 <https://visitukraine.today/blog/7165/there-will-be-more-queues-the-ees-system-has-been-launched-at-three-more-ukrainian-polish-border-crossing-points>;
+  L6 <https://visitukraine.today/blog/7202/the-ees-system-has-been-launched-at-the-border-with-poland-ukrainians-have-been-warned-about-queues>.
+  <!-- maintainer: these two are portal-grade; upgrade the cited source_url to eu-LISA / SG komunikaty when a qualifying freight event is actually logged. -->
+- **eCherga queue-configuration changes.** A suspended/added truck sub-queue is a
+  `policy` event. The **in-band tripwire** is the PR-C queue-set guard
+  (`echerha_queue_guard.py` → `QUEUE_GUARD_ALERT` / `queue_guard_alert.txt`), but
+  the guard alert is **only the tripwire** — the citable `source_url` must still be
+  the external notice (KAS/PUESC, DPSU, or a wire), never the guard output.
