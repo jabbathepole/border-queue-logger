@@ -59,7 +59,9 @@ Earliest observation timestamp per series DB (queried read-only this session):
 **Window start = `2026-06-12` (granica, the earliest of the four).** Events
 predating this cannot confound data we don't have, so **do not backfill earlier
 than 2026-06-12.** The active window is `[2026-06-12 … today]`, i.e. ~16 days as
-of this recon. (Per-series sub-windows differ — a B-vs-C divergence question only
+of this recon (2026-06-28); as of 2026-07-08 it spans 26 days — the window grows
+daily, which is why downstream docs state the span with an explicit "as of" date
+rather than a hardcoded figure. (Per-series sub-windows differ — a B-vs-C divergence question only
 has data from 2026-06-18 onward — but the *log's* coverage floor is the union's
 earliest, 2026-06-12.)
 
