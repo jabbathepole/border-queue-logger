@@ -1,0 +1,10 @@
+id,scraped_at,crossing_id,crossing_name,trucks_exit_min,trucks_entry_min,cars_exit_min,cars_entry_min,buses_exit_min,buses_entry_min,data_timestamp,source_hour
+4328,2026-07-29T03:12:00Z,budomierz,Budomierz,120,,0,,30,,2026-7-29,3
+4326,2026-07-29T03:12:00Z,dolhobyczow,Dołhobyczów,120,,0,,0,,2026-7-29,3
+4324,2026-07-29T03:12:00Z,dorohusk,Dorohusk,660,,,,240,,2026-7-29,3
+4327,2026-07-29T03:12:00Z,hrebenne,Hrebenne,120,,0,,120,,2026-7-29,3
+4329,2026-07-29T03:12:00Z,korczowa,Korczowa,120,,60,,180,,2026-7-29,3
+4332,2026-07-29T03:12:00Z,kroscienko,Krościenko,0,,0,,0,,2026-7-29,3
+4331,2026-07-29T03:12:00Z,malhowice,Małhowice,,,0,,0,,2026-7-29,3
+4330,2026-07-29T03:12:00Z,medyka,Medyka,360,,0,,120,,2026-7-29,3
+4325,2026-07-29T03:12:00Z,zosin,Zosin,120,,60,,0,,2026-7-29,3
