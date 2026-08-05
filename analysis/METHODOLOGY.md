@@ -270,12 +270,44 @@ kept unfiltered for transparency.
 - It is a **tunable methodology parameter**, not a magic constant.
 - The run prints the **measured** excluded fraction:
   *"freshness cutoff = 6.0 h: N/M filled buckets within cutoff (X% excluded as
-  stale)."* **Measured value: pending** — as of 2026-06-18 the committed DPSU
-  readings (2026-06-18) and the granica/eCherga history (≤ 2026-06-17) do not yet
-  overlap, so 0 buckets carry a fill. Re-run once the loggers accumulate
-  overlapping data and record N/M/X% here.
-- **Follow-up (don't block):** once a few weeks exist, sanity-check the 6 h
-  default against the real per-crossing distribution of inter-update gaps.
+  stale)."* **Measured 2026-07-08, clean window (`--window-start
+  2026-06-27T00:00:00Z`, 1 h buckets): `1372/2090` filled buckets within cutoff —
+  `34%` excluded as stale.** (Over the *full* history the figure is inflated to
+  ~60% because forward-fill smears the last pre-blackout reading across the whole
+  216 h INC-003 hole; always measure C-vs-B staleness on the clean window.)
+- **Follow-up — resolved 2026-07-08 (see [`dpsu_coverage.py`](dpsu_coverage.py) /
+  B1).** The 6 h default was checked against the real inter-update gap
+  distribution. DPSU's daytime cadence is a ~3.1 h median gap, so daytime fills
+  comfortably clear 6 h; the exclusions are dominated by the **overnight dead
+  zone** (no readings 22:00–02:59 UTC, recurrent ~9 h evening→morning gaps). Of
+  the 718 stale exclusions, **~58 % fall in the 22:00–05:59 UTC band** (the night
+  gap and its aging tail, peaking 02:00–05:00), the rest concentrated on its
+  early-morning/evening shoulders. So the cutoff mainly removes structurally-
+  absent night coverage, not mid-day staleness — 6 h remains the right default,
+  and **no diurnal claim may rest on C** (it is daytime-conditioned; see the
+  C-vs-B diurnal note below).
+
+### Diurnal coverage — Series C is daytime-conditioned (B1, 2026-07-08)
+
+DPSU does not publish uniformly around the clock. Measured over the clean window
+by [`dpsu_coverage.py`](dpsu_coverage.py): **native readings occur only in UTC
+hours 03–21; there are zero readings 22:00–02:59** — a recurrent overnight dead
+zone (evening→morning gaps of ~9 h, occasionally ~18 h on a full-day skip). The
+effective rate is ~4–5 readings/day, roughly half what a flat "~3 h refresh"
+implies. This supersedes the earlier "~2.5–3 h, occasionally skips"
+characterisation (see the `RECON_dpsu_map.md` addendum).
+
+Consequences, which every C-vs-B statistic inherits:
+- **Series C is daytime-conditioned.** Any C-vs-B comparison is effectively a
+  daytime comparison; the 6 h staleness cutoff structurally excludes most night
+  buckets (≈58 % of stale exclusions fall in 22:00–05:59 UTC — see above).
+- **No diurnal claim may rest on C.** C cannot speak to overnight queue dynamics;
+  it does not observe them. A "queues fall overnight" reading would be an artefact
+  of coverage, not a finding.
+- **This is documented NORMAL source behaviour, not a fault.** Do **not** add any
+  alerting on overnight DPSU staleness — the overnight gap is expected. (The one
+  DPSU condition worth alerting on, a source outage, is INC-003's 403 class, not
+  a nightly gap; and per PR-C scope there is no DPSU-side queue guard.)
 
 ### Sufficiency gate for `dpsu_rank`
 
@@ -288,6 +320,82 @@ that the percentile distribution is degenerate and `dpsu_rank` is left `None`.
 C is a **coarse ~3 h feed forward-filled onto a finer grid**. The C-vs-B
 divergence is **only trusted within the freshness cutoff**; stale fills are
 reported raw but never ranked or compared.
+
+### Paused sub-queues in count comparisons — INCLUDE them (B2/B3/B4, 2026-07-08)
+
+The A-vs-B pipeline (`load_virtual`) drops `is_paused=1` sub-queues because its
+default metric is a **wait time**, which is stale while metering is suspended.
+For a **count** comparison against DPSU (`vehicles_waiting` vs C) that exclusion
+is *wrong*: a paused sub-queue's booked trucks are still a real physical backlog.
+Excluding them decorrelates the crossings with heavy paused queues — e.g.
+Dorohusk `truck_empty` is paused on ~29 % of polls, and dropping it collapses the
+clean-window `r(C, B_sum)` from **+0.994 to +0.047** and inflates the level gap
+from 0.6 % to 24 %. So the C-vs-B level/decomposition/direction analyses
+(`class_decomposition.py`, the direction check, the B2 table below) sum truck
+sub-queues **with paused included**; `dpsu_echerha_comovement.load_echerha` grew
+an `include_paused` flag for this. (This is a known inconsistency vs the A-vs-B
+pipeline's blanket exclusion — logged, not "fixed" here, since re-baselining the
+A-vs-B numbers is out of scope; analogous to the phys_rank baseline note above.)
+
+### Outlier resolution — Zosin is not an outlier on the clean window (B2, 2026-07-08)
+
+A prior pass flagged Zosin as a C-vs-B outlier (r ≈ 0.911). Re-derived on the
+clean window (`>= 2026-06-27`, 1 h buckets, paused-included counts) it is
+**not** an outlier: **r_levels +0.981, r_diff +0.816, median |gap| 2.6 %**
+(n = 60) — squarely in the pack with the other loaded/restricted crossings. The
+earlier flag was contamination: it predated the clean-window floor, so the single
+pre-blackout 2026-06-18 DPSU day sat in the baseline, and it used the paused-
+excluded collapse. Both are corrected above. Full nine-crossing table (clean
+window, C = native DPSU, B = paused-included truck-class sum):
+
+| crossing | n | r_levels | r_diff | lag-1 AC(C) | med B | med C | med \|gap\|% | tier |
+|---|---|---|---|---|---|---|---|---|
+| dorohusk | 60 | +0.994 | +0.952 | +0.860 | 2034.0 | 2051.0 | 0.6 | heavy |
+| korczowa | 44 | +0.998 | +0.985 | +0.923 | 398.2 | 397.5 | 0.8 | heavy |
+| hrebenne | 44 | +0.999 | +0.990 | +0.887 | 451.2 | 448.0 | 0.8 | heavy |
+| medyka | 42 | +0.999 | +0.993 | +0.896 | 572.7 | 569.5 | 0.4 | heavy |
+| zosin | 60 | +0.981 | +0.816 | +0.907 | 328.0 | 328.5 | 2.6 | restricted |
+| dolhobyczow | 44 | +0.984 | +0.978 | +0.897 | 370.0 | 284.0 | 32.5 | restricted |
+| budomierz | 44 | +0.864 | +0.846 | +0.219 | 6.6 | 6.0 | 10.6 | marginal |
+| kroscienko | 40 | −0.068 | −0.003 | −0.026 | 2.0 | 0.0 | — | marginal |
+| malhowice | 0 | — | — | — | — | — | — | marginal |
+
+(Dołhobyczów's 32.5 % gap is the population-definition effect below, not a data
+error; kroscienko's near-zero r is the degenerate-marginal case, B6.)
+
+### DPSU population definition at Dołhobyczów (B3, 2026-07-08) — strongly-supported hypothesis, not settled fact
+
+At most crossings C matches the eCherga truck-class **sum** (dorohusk gap 0.6 %,
+zosin 2.6 %). At **Dołhobyczów it does not**: decomposing B by class (clean
+window, n = 44) shows C tracks the **`truck_empty` (empty ≥ 7.5 t) sub-queue
+alone** — median B_empty 284.0 vs median C 284.0, **median |gap| 0.7 %**,
+median(B−C) +0.3, r_levels +1.000 — while the loaded 3.5–7.5 t queue
+(`truck_le_7_5t`, median 84.8) and hence the class **sum** (median 370.0, gap
+32.5 %) diverge from C. Controls confirm the contrast: at dorohusk and zosin C
+matches B_sum (gaps 0.6 % / 2.6 %), and zosin's `truck_empty` **alone** misses
+(gap ~23 %).
+
+**Hypothesis (strongly supported, not proven):** DPSU's `trucks_waiting` at
+Dołhobyczów counts the **empty ≥ 7.5 t** approach population and **excludes** the
+loaded 3.5–7.5 t queue — plausibly because the physical approach lane / sensor
+DPSU reads covers only the empty-truck lane at this small restricted crossing.
+
+Consequences:
+- **Per-crossing DPSU population definitions may differ.** C is not guaranteed to
+  be "all trucks" everywhere; at Dołhobyczów it is a sub-population.
+- **Dołhobyczów C-vs-B comparisons must use `B_empty`, not `B_sum`.** Using the
+  sum manufactures a spurious 32 % divergence.
+
+Verification path (maintainer): watch whether C stays locked to `B_empty` through
+a future divergence of the empty vs loaded volumes (if they move apart and C
+follows empty, the hypothesis holds); and inspect the DPSU map legend/tooltip
+semantics at Dołhobyczów for what population the figure claims to count.
+
+**This per-class mismatch is additional evidence of source INDEPENDENCE.** If
+DPSU and eCherga were the same feed dressed differently, C could not track one
+eCherga sub-queue while ignoring another at one crossing yet track the sum
+elsewhere. The crossings therefore corroborate each other as genuinely separate
+instruments.
 
 ### Next analytical step (NOT in this PR)
 
@@ -308,13 +416,38 @@ tightly), and a **magnitude sanity** check (the westbound UA→PL exit backlog
 reaches thousands of trucks — recon's ~2,251 at Dorohusk — so large counts
 corroborate the direction).
 
-- **Regenerate:** `python -m analysis.direction_check [--bucket-hours 1]` where
-  `data/{dpsu,echerha,queues}.db` are present.
-- **Result: pending data.** As of 2026-06-18 the overlap is 0 buckets on both
-  legs, so every crossing returns *"insufficient overlap — cannot judge yet."*
-  The magnitude leg is already informative (Dorohusk ~2,071; near-zero at
-  kroscienko/malhowice). Re-run once C overlaps A and B, and record the verdicts
-  here.
+**Both levels and first differences are reported** (`r_lvl`, `r_diff`). Queue
+series are highly persistent (lag-1 autocorrelation of C at the big four
+0.86–0.92), so a high *levels* correlation partly reflects shared slow drift and
+overstates evidential weight. The **differenced** correlation asks whether the
+hour-to-hour *changes* co-move — the version of the corroboration that survives
+the persistence objection — and it holds strongly. The C-vs-B leg uses
+paused-included truck counts (see the paused note above).
+
+- **Regenerate:** `python -m analysis.direction_check [--bucket-hours 1]`
+  (default `--window-start 2026-06-27T00:00:00Z`, the post-INC-003 clean window)
+  where `data/{dpsu,echerha,queues}.db` are present.
+- **Result (measured 2026-07-08, clean window, 1 h buckets): direction
+  SUPPORTED at all 7 crossings with a truck queue; 0 flagged.** Per crossing,
+  `r(C,B)` (same direction) vs `r(C,A)` (opposite):
+
+  | crossing | med C | r(C,B) lvl | r(C,B) diff | r(C,A) lvl | verdict |
+  |---|---|---|---|---|---|
+  | dorohusk | 2051 | +0.994 | +0.952 | +0.554 | SUPPORTED |
+  | korczowa | 398 | +0.998 | +0.985 | −0.306 | SUPPORTED |
+  | hrebenne | 448 | +0.999 | +0.990 | +0.058 | SUPPORTED |
+  | medyka | 570 | +0.999 | +0.993 | +0.413 | SUPPORTED |
+  | zosin | 328 | +0.981 | +0.816 | −0.415 | SUPPORTED |
+  | dolhobyczow | 284 | +0.984 | +0.978 | −0.203 | SUPPORTED |
+  | budomierz | 6 | +0.864 | +0.846 | +0.227 | SUPPORTED |
+  | kroscienko | 0 | −0.068 | −0.003 | n/a | thin (degenerate marginal) |
+  | malhowice | — | — | — | — | no truck queue |
+
+  Every truck-bearing crossing tracks eCherga (same direction) far more tightly
+  than granica (opposite), on both levels and differences. Magnitude corroborates:
+  Dorohusk med ~2,051 trucks (the westbound backlog scale), near-zero at the
+  marginal crossings. kroscienko/malhowice are the degenerate marginal tier (B6),
+  not evidence against direction.
 
 ---
 
@@ -331,21 +464,72 @@ See [`INCIDENTS.md`](../INCIDENTS.md) for the audited log.
   schedule unreliability left fewer scrapes than the nominal 3 h cron implies.
   Not corruption — handled by `complete=0` exclusion and `--min-buckets`.
 
-## Data-sufficiency status (as of 2026-06-15)
+## Data-sufficiency status (measured 2026-07-08)
 
-The eCherga logger went live **2026-06-15** and currently holds **one snapshot**
-(`2026-06-15T11:32Z`). With a single virtual timepoint there is **no per-crossing
-distribution and no time series**, so Steps 2–5 are **not computable** and the
-pipeline reports `INSUFFICIENT DATA` per crossing (it does **not** fabricate
-ranks/events/lags). Worse, that single eCherga reading falls in **no bucket that
-also contains a granica poll** (granica's nearest are 04:59Z and 12:27Z), so even
-the joined table currently has **zero `complete` rows**.
+The thin-window caveat that opened this section (one eCherga snapshot, zero
+`complete` rows) is **resolved**. Measured over the full window
+(`2026-06-12 → 2026-07-08`, 1 h buckets) by `python -m analysis.join_divergence`
+(read from `per_crossing_summary.csv`), **all 8 truck-bearing crossings clear the
+`--min-buckets = 24` gate** — Steps 2–5 are now computable:
 
-This is expected and self-resolving: eCherga polls every 30 min, granica every
-3 h. Re-run as data accumulates; `--min-buckets` (default 24) gates when a
-crossing earns real statistics. **Do not interpret divergence/events/lag until
-multiple crossings clear that gate** — the article's credibility depends on not
-overclaiming from a thin window.
+| crossing | n complete buckets | ≥ 24? | tier |
+|---|---|---|---|
+| dorohusk | 253 | yes | heavy |
+| medyka | 246 | yes | heavy |
+| korczowa | 218 | yes | heavy |
+| hrebenne | 144 | yes | heavy |
+| dolhobyczow | 247 | yes | restricted |
+| zosin | 216 | yes | restricted |
+| kroscienko | 222 | yes | marginal (degenerate) |
+| budomierz | 108 | yes | marginal (degenerate) |
+| malhowice | 0 | no | marginal (no truck queue) |
+
+Malhowice never qualifies: it has no eCherga truck queue (bus id 102 only), so it
+has no complete truck bucket and is correctly absent from all per-crossing truck
+statistics. The marginal crossings clear the *count* gate but their near-zero
+medians make ranks/correlations noise (B6) — report them flagged degenerate.
+
+`--min-buckets` (default 24) still gates who earns statistics; the earlier "do
+not interpret until multiple crossings clear that gate" warning is now satisfied
+for the heavy and restricted tiers. (Note: A-vs-B remains the *cross-direction*
+asymmetry proxy — a high complete-bucket count does not upgrade it to a same-flow
+comparison; that is what C-vs-B is for.)
+
+## Crossing tiers — the freight scope is not uniform (B6, 2026-07-08)
+
+"Nine canonical crossings" conflates four freight regimes. `crossings.py`
+exposes them as `CROSSING_TIER`; the evidence (eCherga truck classes present,
+clean-window median B = paused-included truck-class sum and median C = native
+DPSU, and dataset-2708 April-2026 `truck`/`z_RP` volume):
+
+| crossing | tier | eCherga truck classes | med B | med C | 2708 truck (Apr) |
+|---|---|---|---|---|---|
+| dorohusk | **heavy** | empty, ge_7.5t, goods_1_24 | 2034 | 2051 | 17,683 |
+| korczowa | **heavy** | ge_7.5t, goods_1_24 | 398 | 398 | 10,821 |
+| hrebenne | **heavy** | ge_7.5t, goods_1_24 | 451 | 448 | 8,706 |
+| medyka | **heavy** | empty, ge_7.5t | 573 | 570 | 6,120 |
+| zosin | **restricted** | empty, le_7.5t | 328 | 329 | 4,275 |
+| dolhobyczow | **restricted** | empty, le_7.5t | 370 | 284 | 4,044 |
+| budomierz | **marginal** | le_7.5t | 6.6 | 6.0 | 2,262 |
+| kroscienko | **marginal** | le_7.5t | 2.0 | 0.0 | 752 |
+| malhowice | **marginal** | *bus only (id 102)* | — | — | 0 |
+
+- **heavy** — a loaded ≥ 7.5 t queue exists; large physical backlog. These carry
+  the corridor's freight signal.
+- **restricted** — **no** loaded ≥ 7.5 t queue (only le_7.5 t + empty). Freight
+  scope is genuinely narrower, not merely quieter — relevant when reading their
+  levels against the heavy crossings, and the cause of the Dołhobyczów
+  population-definition effect above.
+- **marginal** — degenerate truck queue: le_7.5 t only with near-zero medians
+  (budomierz ~6, kroscienko ~0), or **no truck queue at all** (malhowice). Note
+  2708 shows budomierz/kroscienko *do* pass trucks monthly (2,262 / 752) — they
+  just don't **queue**, so the *queue* series is degenerate even though volume is
+  nonzero.
+
+**Rule:** per-crossing statistics are reported for the **heavy + restricted**
+tiers; **marginal-tier statistics are computed but flagged degenerate** — their
+near-zero medians make ranks and correlations noise (clean-window kroscienko
+`r(C,B) ≈ −0.07`). Do not headline a marginal-tier number.
 
 ## Parameters (all defaulted, none hard-coded)
 

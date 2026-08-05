@@ -42,29 +42,48 @@ def _bucket(ts_str, h):
     return epoch + dt.timedelta(seconds=math.floor(secs / size) * size)
 
 
-def load_dpsu(crossing, h):
+def load_dpsu(crossing, h, window_start=None):
     """DPSU physical truck count per bucket (mean of readings in the bucket),
-    keyed on the source update time."""
+    keyed on the source update time. Native readings only (ts_synthetic=0 when the
+    column exists). Optional window_start (ISO 'YYYY-MM-DDTHH:MM:SSZ') drops
+    readings before that instant — pass the clean-window floor to exclude the
+    pre-blackout stub (INC-003)."""
     cells = defaultdict(list)
     with _ro("data/dpsu.db") as c:
+        has_synth = any(r["name"] == "ts_synthetic"
+                        for r in c.execute("PRAGMA table_info(dpsu_records)"))
+        synth = "AND COALESCE(ts_synthetic,0)=0" if has_synth else ""
         for r in c.execute(
             "SELECT source_updated_utc, trucks_waiting FROM dpsu_records "
-            "WHERE crossing_id=? AND trucks_waiting IS NOT NULL", (crossing,)
+            f"WHERE crossing_id=? AND trucks_waiting IS NOT NULL {synth}", (crossing,)
         ):
+            if window_start and r["source_updated_utc"] < window_start:
+                continue
             cells[_bucket(r["source_updated_utc"], h)].append(r["trucks_waiting"])
     return {b: statistics.fmean(v) for b, v in cells.items()}
 
 
-def load_echerha(crossing, h):
+def load_echerha(crossing, h, window_start=None, include_paused=False):
     """eCherga virtual booked truck count per bucket: sum sub-queues per poll
-    (total trucks queued at the crossing), then mean across the bucket."""
+    (total trucks queued at the crossing), then mean across the bucket.
+
+    include_paused: by default paused sub-queues are dropped (matching the wait-
+    metric collapse in join_divergence). For a COUNT comparison, pass True — a
+    paused sub-queue's `vehicles_waiting` is still a real physical backlog, and
+    excluding it decorrelates crossings with heavy paused queues (e.g. dorohusk
+    r(C,B) collapses from ~0.99 to ~0.05). See analysis/METHODOLOGY.md.
+
+    window_start (ISO) drops polls before that instant."""
+    paused = "" if include_paused else "AND COALESCE(is_paused,0)=0 "
     per_poll = defaultdict(float)
     with _ro("data/echerha.db") as c:
         for r in c.execute(
             "SELECT scraped_at, vehicles_waiting FROM echerha_records "
             "WHERE crossing_id=? AND vehicle_class LIKE 'truck%' "
-            "AND COALESCE(is_paused,0)=0 AND vehicles_waiting IS NOT NULL", (crossing,)
+            f"{paused}AND vehicles_waiting IS NOT NULL", (crossing,)
         ):
+            if window_start and r["scraped_at"] < window_start:
+                continue
             per_poll[(r["scraped_at"])] += r["vehicles_waiting"]
     cells = defaultdict(list)
     for scraped_at, total in per_poll.items():
