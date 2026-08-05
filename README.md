@@ -10,8 +10,11 @@ scrapers write to separate SQLite tables that share canonical crossing ids
 | **eCherga** | `back.echerha.gov.ua` JSON | UA→PL virtual | wait **seconds** + booked count | `echerha_scraper.py`, `echerha_db.py` | `echerha_records` |
 | **DPSU** | `dpsu.gov.ua/uk/map` HTML | UA→PL physical | trucks/cars **queued** (count) + cars/hr | `dpsu_scraper.py`, `dpsu_db.py` | `dpsu_records` |
 
-Each logger runs every 30 min via GitHub Actions, validates before insert, and
-opens a GitHub issue on failure. The analysis layer
+Cadence differs per logger: **granica** runs every 3 h (`scrape.yml`, cron
+`0 */3`, plus an external cron trigger for reliable spacing — see INC-002);
+**eCherga** and **DPSU** run every 30 min (`echerha.yml` / `dpsu.yml`, cron
+`*/30`). Each logger validates before insert and opens a GitHub issue on failure
+(see INC-003 for the case where that issue stream went untriaged). The analysis layer
 (`analysis/join_divergence.py`) joins the feeds read-only; see
 `analysis/METHODOLOGY.md`, `INCIDENTS.md`, and the `RECON_*.md` notes for detail.
 
@@ -42,8 +45,18 @@ This project republishes public border-congestion data. Attribution per source:
   (State Border Guard Service of Ukraine), https://dpsu.gov.ua/uk/map — licensed
   under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 - **granica.gov.pl** — Polish Border Guard / Ministry of the Interior and
-  Administration public border wait-time service.
+  Administration public border wait-time service. Basis: public no-login SOAP
+  surface; `robots.txt` reviewed **2026-07-08** (`User-agent: *` / `Disallow:`
+  empty → no path restriction); no clause prohibiting automated read identified.
+  No explicit reuse licence is published for the SOAP data, so it is treated as
+  public-sector information and attributed here as good practice.
 - **eCherga** — Ukrainian electronic-queue service (`echerha.gov.ua`), public
-  workload (Завантаженість) surface.
+  workload (Завантаженість) surface. Basis (per `RECON_echerha.md`, recon
+  **2026-06-15**): public no-login workload surface only (no account/booking/
+  per-driver data); `robots.txt` was **unreachable during recon** (the site
+  intermittently reset the connection), so no directive could be confirmed —
+  cadence is held conservative (30 min) and the User-Agent is descriptive to stay
+  well within polite-use norms.
 
-Public, no-login surfaces only; `robots.txt` respected; descriptive User-Agent.
+Public, no-login surfaces only; `robots.txt` respected where reachable;
+descriptive User-Agent.

@@ -106,3 +106,92 @@ corruption issue. The analysis already handles uneven coverage correctly:
 missing buckets are never filled (`complete=0` buckets are excluded), and
 `--min-buckets` (default 24) gates per-crossing statistics. No row is wrong;
 there are simply fewer of them than the nominal cadence implies.
+
+---
+
+## INC-003 — DPSU source returned 403 for 8 days (2026-06-18 → 2026-06-27) — **8-day interior hole in Series C, no bad rows**
+
+**Status:** Recovered on its own; documented after the fact. **Dataset impact:
+an 8-day absence in Series C (DPSU), all 9 crossings — no corrupted rows.**
+Re-derived read-only against `data/dpsu.db` on **2026-07-08**.
+
+### What broke
+For ~8 days the DPSU logger ran on schedule but every run aborted before writing:
+`dpsu.gov.ua/uk/map` returned **HTTP 403 Forbidden** to the GitHub Actions
+runner, across all four retry attempts (backoff 15/30/45 s). Representative run
+log (`2026-06-25T04:43Z`, run `28147387567`):
+
+```
+WARNING Fetch attempt 1/4 failed (403 Client Error: Forbidden for url: https://dpsu.gov.ua/uk/map) — retrying in 15s
+...
+ERROR Failed to fetch https://dpsu.gov.ua/uk/map after 4 attempts: 403 Client Error: Forbidden
+ERROR Scrape aborted — map unreachable or structure changed
+requests.exceptions.HTTPError: 403 Client Error: Forbidden for url: https://dpsu.gov.ua/uk/map
+##[error]Process completed with exit code 1.
+```
+
+### Root cause — classification **(b): scraper ran and failed**
+Not (a) "Actions never ran" — **every** interior run fired (71 runs
+`2026-06-19T16:57Z … 2026-06-26T22:43Z`, conclusion `failure` for all 71). Not
+(c) stale/empty payloads deduping to zero — nothing was fetched at all. The
+source itself **refused the request** (403), so the fetch guard in
+`dpsu_scraper.py:fetch_map_html` raised and the run exited non-zero **before any
+insert**. The 403 is source-side (anti-automation block on the runner's egress
+IP — the same class of block RECON_echerha.md documents for Akamai; DPSU began
+403-ing the Azure runner and later stopped). Whether the block was IP-based or a
+temporary WAF change on DPSU's side is **not determinable from here**; the
+proximate cause (sustained 403 → clean abort → zero inserts) is certain. The
+source recovered at `2026-06-27T18:00Z` and native readings resumed for all 9
+crossings with no code change.
+
+### Affected window (UTC) — all 9 crossings
+Last native reading before the hole and first native reading after, per crossing
+(distinct `source_updated_utc`, `ts_synthetic=0`):
+
+| crossing | last before | first after |
+|---|---|---|
+| budomierz | 2026-06-18T17:49:28Z | 2026-06-27T18:00:58Z |
+| dolhobyczow | 2026-06-18T17:48:52Z | 2026-06-27T18:00:37Z |
+| dorohusk | 2026-06-18T18:00:21Z | 2026-06-27T18:04:08Z |
+| hrebenne | 2026-06-18T17:49:07Z | 2026-06-27T18:00:49Z |
+| korczowa | 2026-06-18T17:50:44Z | 2026-06-27T18:01:10Z |
+| kroscienko | 2026-06-18T17:50:02Z | 2026-06-27T18:01:33Z |
+| malhowice | 2026-06-18T17:50:21Z | 2026-06-27T18:01:45Z |
+| medyka | 2026-06-18T17:49:53Z | 2026-06-27T18:01:23Z |
+| zosin | 2026-06-18T18:00:00Z | 2026-06-27T18:03:52Z |
+
+System-wide boundary: **`2026-06-18T18:00:21Z` → `2026-06-27T18:00:37Z`** (last
+native anywhere → first native anywhere) = a **216.0 h** gap (9 days + 16 s).
+Rows with `scraped_at` in `[2026-06-19, 2026-06-27)`: **0**. No daily CSV exists
+for 2026-06-19 … 2026-06-26 (`data/dpsu_*.csv` jumps `2026-06-18` → `2026-06-27`).
+
+### Data impact
+An **8-day interior hole** in Series C (DPSU) across all 9 crossings. **No bad
+rows** — this is *absence*, not corruption. The fetch guard did exactly its job:
+a refused request writes nothing rather than a null-filled placeholder, so every
+stored DPSU row remains a real reading.
+
+### Recoverable?
+**No.** DPSU publishes only *current* state (no public history), so the 8 days of
+missing readings can never be backfilled. Per methodology, the remedy is
+documentation, not interpolation — **do not** synthesise fills across this gap.
+
+### Remediation for analysis
+The blackout splits Series C into a thin pre-hole stub (2026-06-18 only) and the
+usable post-recovery stream. **The clean B–C pairing window starts
+`2026-06-27`.** Any C-vs-B statistic must set
+`--window-start 2026-06-27T00:00:00Z` or explicitly justify a different floor;
+otherwise the single pre-blackout day contaminates the per-crossing DPSU
+distribution (see the Zosin re-derivation, `analysis/METHODOLOGY.md`).
+
+### Detection-failure note — the loop fired but no one was listening
+The failure→GitHub-issue automation **worked mechanically**: **71** issues titled
+`DPSU scraper failure …` were auto-opened over the interior
+(`created:2026-06-19..2026-06-26`), all later closed `COMPLETED` with **zero
+comments** (batch-closed ~`2026-06-27T23:23Z`). So the loop did not silently
+swallow the failure — it produced 71 signals. What it did **not** do is surface
+those signals to a human: with no triage step, 71 identical auto-issues read as
+noise and no `INCIDENTS.md` entry was made for 8 days. **What closes the loop:** a
+recurring **"triage open GitHub issues on this repo"** line in the survey
+protocol (added in PR-D, D2), so an unattended run of failure-issues is caught
+within a week rather than never.

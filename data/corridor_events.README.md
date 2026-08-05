@@ -27,9 +27,11 @@ separate `INCIDENTS.md`. See METHODOLOGY.md for the instrument-vs-world split.
 `2026-06-12T06:40:00Z`. **Do not backfill earlier than 2026-06-12** — events
 predating series collection cannot confound data that does not exist.
 
-16 days supports the **structural-asymmetry** read (true at any window length) but
-**no capacity-trend claim**. A near-empty log is itself a finding: it characterises
-the baseline as **normal operations**, a caveat to state, not to hide.
+As of 2026-07-08 the window spans 26 days (2026-06-12 → …). It supports the
+**structural-asymmetry** read — which is *window-invariant* (true at any window
+length, so it does not stale as the window grows) — but **no capacity-trend
+claim** (still far too short). A near-empty log is itself a finding: it
+characterises the baseline as **normal operations**, a caveat to state, not to hide.
 
 ---
 
