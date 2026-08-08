@@ -11,7 +11,8 @@
 ## §0 — What this layer is, and why it inverts the live-logger rules
 
 The repo runs a four-series directional grid (A granica PL→UA physical, B eCherga
-UA→PL virtual, C DPSU UA→PL physical, D PL→UA virtual = structurally absent) plus
+UA→PL virtual, C DPSU UA→PL physical, D PL→UA virtual = structurally absent — see
+[`SERIES_D.md`](SERIES_D.md) for the dated claim + verification scaffold) plus
 a code-only monthly volume baseline (2708). **Every one of those is
 machine-collected, schema-validated, hard-failing, and reproducible by re-running
 a script.**
