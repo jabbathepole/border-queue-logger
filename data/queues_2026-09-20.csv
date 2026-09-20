@@ -17,3 +17,12 @@ id,scraped_at,crossing_id,crossing_name,trucks_exit_min,trucks_entry_min,cars_ex
 7257,2026-09-20T11:00:00Z,malhowice,Małhowice,,,0,,0,,2026-9-20,11
 7256,2026-09-20T11:00:00Z,medyka,Medyka,,,,,,,2026-9-20,11
 7251,2026-09-20T11:00:00Z,zosin,Zosin,60,,0,,0,,2026-9-20,11
+7263,2026-09-20T15:46:00Z,budomierz,Budomierz,0,,0,,0,,2026-9-20,15
+7261,2026-09-20T15:46:00Z,dolhobyczow,Dołhobyczów,0,,0,,0,,2026-9-20,15
+7259,2026-09-20T15:46:00Z,dorohusk,Dorohusk,720,,,,0,,2026-9-20,15
+7262,2026-09-20T15:46:00Z,hrebenne,Hrebenne,900,,0,,0,,2026-9-20,15
+7264,2026-09-20T15:46:00Z,korczowa,Korczowa,1080,,60,,0,,2026-9-20,15
+7267,2026-09-20T15:46:00Z,kroscienko,Krościenko,0,,0,,0,,2026-9-20,15
+7266,2026-09-20T15:46:00Z,malhowice,Małhowice,,,0,,0,,2026-9-20,15
+7265,2026-09-20T15:46:00Z,medyka,Medyka,1440,,60,,180,,2026-9-20,15
+7260,2026-09-20T15:46:00Z,zosin,Zosin,60,,0,,0,,2026-9-20,15
