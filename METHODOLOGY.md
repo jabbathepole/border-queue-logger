@@ -25,9 +25,9 @@ that distinction mechanical rather than a judgment call at analysis time.
 
 | Series | Source | Direction | Metric | Cadence |
 |---|---|---|---|---|
-| A — granica | granica.gov.pl SOAP | PL→UA (wyjazd / eastbound) | physical **wait minutes** | ~8×/day |
-| B — eCherga | back.echerha.gov.ua | UA→PL (westbound) | **virtual** queue (seconds, booked count) | ~30 min |
-| C — DPSU | dpsu.gov.ua/uk/map | UA→PL (westbound) | physical **trucks waiting** (count) | sub-hourly |
+| A — granica | granica.gov.pl SOAP | PL→UA (wyjazd / eastbound) | physical **wait minutes** | every 3 h (`0 */3`, ~8×/day nominal; + external cron) |
+| B — eCherga | back.echerha.gov.ua | UA→PL (westbound) | **virtual** queue (seconds, booked count) | every 30 min (`*/30`) |
+| C — DPSU | dpsu.gov.ua/uk/map | UA→PL (westbound) | physical **trucks waiting** (count) | every 30 min poll (`*/30`); source refreshes only ~3 h |
 | **Baseline** — monthly traffic | **dane.gov.pl 2708** | **both** (z RP / do RP) | monthly **vehicle counts** | **monthly** |
 
 ## Corridor event log (`data/corridor_events.csv`)
@@ -53,10 +53,12 @@ it is **impossible**: every row is guaranteed live-sourced. Backfill never goes
 earlier than 2026-06-12 — events predating series collection cannot confound data
 that does not exist.
 
-### What 16 days does and does not support
+### What the window does and does not support
 
-The window supports the **structural-asymmetry** read (true at any window length)
-but **no capacity-trend claim** (far too short). A near-empty log is itself a
+As of 2026-07-08 the window spans 26 days (2026-06-12 → …). The window supports
+the **structural-asymmetry** read — which is *window-invariant* (it holds at any
+window length, so this claim does not stale as the window grows) — but **no
+capacity-trend claim** (26 days is still far too short). A near-empty log is itself a
 finding: it characterises the baseline as **normal operations** — a caveat to
 state, not to hide. As of 2026-06-28 the file is header-only: a live survey found
 no qualifying freight-disruption event in-window (two candidates — a Medyka

@@ -30,8 +30,9 @@ Poland–Ukraine border crossings, creating a historical time-series dataset
 
 ## Step 4 — Scheduling
 - Run via GitHub Actions on a cron schedule (every 3 hours), committing the
-  updated SQLite/CSV back to a private repo — this keeps the logger running
-  without a personal machine being on.
+  updated SQLite/CSV back to a private repo *(as-built: public — the repo shipped
+  public, which also gives unlimited Actions minutes; see the operations log below)* —
+  this keeps the logger running without a personal machine being on.
 - Add basic failure handling: if the site is unreachable or the structure
   changes, log the error and open a GitHub issue automatically rather than
   silently writing nothing.

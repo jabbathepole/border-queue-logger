@@ -330,6 +330,12 @@ See [`INCIDENTS.md`](../INCIDENTS.md) for the audited log.
 - **INC-002 — irregular scrape cadence (early window):** GitHub Actions
   schedule unreliability left fewer scrapes than the nominal 3 h cron implies.
   Not corruption — handled by `complete=0` exclusion and `--min-buckets`.
+- **INC-003 — DPSU 403 blackout (2026-06-18 → 2026-06-27):** the DPSU source
+  returned HTTP 403 to the runner for ~8 days; every run aborted before insert,
+  leaving an **8-day interior hole in Series C** (all 9 crossings, boundary
+  `2026-06-18T18:00:21Z` → `2026-06-27T18:00:37Z`, 216.0 h). Absence, not
+  corruption. **Consequence for this pipeline: the clean C-vs-B window starts
+  `2026-06-27` — pass `--window-start 2026-06-27T00:00:00Z` to any C-vs-B run.**
 
 ## Data-sufficiency status (as of 2026-06-15)
 
