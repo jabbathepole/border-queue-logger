@@ -28,7 +28,13 @@ that distinction mechanical rather than a judgment call at analysis time.
 | A — granica | granica.gov.pl SOAP | PL→UA (wyjazd / eastbound) | physical **wait minutes** | ~8×/day |
 | B — eCherga | back.echerha.gov.ua | UA→PL (westbound) | **virtual** queue (seconds, booked count) | ~30 min |
 | C — DPSU | dpsu.gov.ua/uk/map | UA→PL (westbound) | physical **trucks waiting** (count) | sub-hourly |
+| **D — PL→UA virtual** | **— (none found)** | **PL→UA (eastbound)** | **virtual queue** | **structurally absent** |
 | **Baseline** — monthly traffic | **dane.gov.pl 2708** | **both** (z RP / do RP) | monthly **vehicle counts** | **monthly** |
+
+Series D is the fourth grid cell — a Polish PL→UA truck booking/virtual-queue
+instrument — claimed **structurally absent**. That claim carries the "UA→PL
+observed twice, PL→UA once" asymmetry, so it has its own dated claim +
+verification scaffold + counter-evidence in [`SERIES_D.md`](../SERIES_D.md).
 
 ## Corridor event log (`data/corridor_events.csv`)
 
