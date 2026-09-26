@@ -21,6 +21,19 @@ A spike caused by an instrument fault must be discounted; a spike caused by a
 world event is signal to be explained. Keeping the two in different files makes
 that distinction mechanical rather than a judgment call at analysis time.
 
+**One event class lands in *both* files: an eCherga queue-set change.** When a
+truck sub-queue is suspended/removed or a new one appears (documented precedent:
+the 2024 pilot e-queue abolitions on this corridor), it is simultaneously an
+**instrument** event — B's truck sum steps up or down because the *set of things
+measured* changed — and a **world** event — the underlying booking-policy action.
+So it is logged twice, deliberately: the instrument impact in `INCIDENTS.md`, and
+the policy action as a `policy` row in `data/corridor_events.csv` **with an
+external `source_url`**. The in-band detector is the queue-set guard
+(`echerha_queue_guard.py`, which diffs each payload against
+`echerha_expected_queues.json` and trips a `QUEUE_GUARD_ALERT` / drop-file) — but
+the guard alert is only the **tripwire**; the CSV citation must always be the
+external notice, never the guard.
+
 ## Series overview
 
 | Series | Source | Direction | Metric | Cadence |

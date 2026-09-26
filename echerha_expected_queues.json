@@ -1,0 +1,175 @@
+{
+  "generated_at": "2026-07-08T00:00:00Z",
+  "generated_from_scrape": "2026-07-08T20:43:00Z",
+  "description": "Baseline set of eCherga queue ids expected in the Poland-border workload payload. The queue-set guard (echerha_queue_guard.py) diffs each live payload against this set: a baseline id absent for two consecutive scrapes, or an id not listed here, raises an alert. Keyed on payload PRESENCE, never on is_paused. Update ONLY by a deliberate reviewed PR (fail-loud, human-in-loop) when eCherga genuinely adds/removes a sub-queue - which is itself a policy event for data/corridor_events.csv.",
+  "queues": [
+    {
+      "echerha_id": 1,
+      "crossing_id": "dorohusk",
+      "vehicle_class": "truck_ge_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Ягодин – Дорогуськ (для вантажівок ≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 2,
+      "crossing_id": "dorohusk",
+      "vehicle_class": "truck_goods_1_24",
+      "carrier_type": 1,
+      "echerha_title": "Ягодин – Дорогуськ. Товари 1-24 групи УКТЗЕД (≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 5,
+      "crossing_id": "hrebenne",
+      "vehicle_class": "truck_ge_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Рава-Руська – Хребенне (для вантажівок ≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 6,
+      "crossing_id": "korczowa",
+      "vehicle_class": "truck_ge_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Краківець – Корчова (для вантажівок ≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 7,
+      "crossing_id": "zosin",
+      "vehicle_class": "truck_empty",
+      "carrier_type": 1,
+      "echerha_title": "Устилуг – Зосин (для порожніх вантажівок ≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 8,
+      "crossing_id": "medyka",
+      "vehicle_class": "truck_ge_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Шегині – Медика (для вантажівок ≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 19,
+      "crossing_id": "hrebenne",
+      "vehicle_class": "truck_goods_1_24",
+      "carrier_type": 1,
+      "echerha_title": "Рава-Руська – Хребенне. Товари 1-24 групи УКТЗЕД (≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 20,
+      "crossing_id": "korczowa",
+      "vehicle_class": "truck_goods_1_24",
+      "carrier_type": 1,
+      "echerha_title": "Краківець – Корчова. Товари 1-24 групи УКТЗЕД (≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 23,
+      "crossing_id": "korczowa",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Краківець – Корчова. Автобуси"
+    },
+    {
+      "echerha_id": 24,
+      "crossing_id": "medyka",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Шегині - Медика. Автобуси"
+    },
+    {
+      "echerha_id": 29,
+      "crossing_id": "dorohusk",
+      "vehicle_class": "truck_empty",
+      "carrier_type": 1,
+      "echerha_title": "Ягодин – Дорогуськ (для порожніх вантажівок ≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 31,
+      "crossing_id": "dolhobyczow",
+      "vehicle_class": "truck_empty",
+      "carrier_type": 1,
+      "echerha_title": "Угринів – Долгобичув (для порожніх вантажівок ≥ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 54,
+      "crossing_id": "dorohusk",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Ягодин – Дорогуськ. Автобуси (за розкладом)"
+    },
+    {
+      "echerha_id": 75,
+      "crossing_id": "kroscienko",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Смільниця – Кросьценко. Автобуси (за розкладом)"
+    },
+    {
+      "echerha_id": 76,
+      "crossing_id": "dolhobyczow",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Угринів – Долгобичув. Автобуси (за розкладом)"
+    },
+    {
+      "echerha_id": 78,
+      "crossing_id": "hrebenne",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Рава-Руська – Хребенне. Автобуси (за розкладом)"
+    },
+    {
+      "echerha_id": 80,
+      "crossing_id": "zosin",
+      "vehicle_class": "truck_le_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Устилуг – Зосин (для вантажівок ≤ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 84,
+      "crossing_id": "kroscienko",
+      "vehicle_class": "truck_le_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Смільниця – Кросьценко (для вантажівок ≤ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 88,
+      "crossing_id": "budomierz",
+      "vehicle_class": "truck_le_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Грушів – Будомєж (для вантажівок ≤ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 91,
+      "crossing_id": "medyka",
+      "vehicle_class": "truck_empty",
+      "carrier_type": 1,
+      "echerha_title": "Шегині – Медика (для порожніх вантажівок ≥ 3,5 тонн)"
+    },
+    {
+      "echerha_id": 98,
+      "crossing_id": "dolhobyczow",
+      "vehicle_class": "truck_le_7_5t",
+      "carrier_type": 1,
+      "echerha_title": "Угринів – Долгобичув (для вантажівок ≥ 3,5 тонн до ≤ 7,5 тонн)"
+    },
+    {
+      "echerha_id": 102,
+      "crossing_id": "malhowice",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Нижанковичі – Мальховичі. Автобуси (за розкладом)"
+    },
+    {
+      "echerha_id": 104,
+      "crossing_id": "budomierz",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Грушів – Будомєж. Автобуси (за розкладом)"
+    },
+    {
+      "echerha_id": 113,
+      "crossing_id": "zosin",
+      "vehicle_class": "bus",
+      "carrier_type": 2,
+      "echerha_title": "Устилуг - Зосин. Автобуси (за розкладом)"
+    }
+  ]
+}
