@@ -37,8 +37,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from crossings import CANONICAL_NAMES
 from tests.dpsu_echerha_comovement import _bucket, _ro, load_dpsu, load_echerha, pearson
 
+DEFAULT_WINDOW_START = "2026-06-27T00:00:00Z"  # clean window floor (post-INC-003 blackout)
 
-def load_granica(crossing: str, h: float) -> dict:
+
+def load_granica(crossing: str, h: float, window_start: str | None = None) -> dict:
     """granica PL->UA outbound physical truck wait (minutes) per bucket — the
     OPPOSITE direction to DPSU. Mean of readings in each bucket."""
     cells = defaultdict(list)
@@ -47,6 +49,8 @@ def load_granica(crossing: str, h: float) -> dict:
             "SELECT scraped_at, trucks_exit_min FROM queue_records "
             "WHERE crossing_id=? AND trucks_exit_min IS NOT NULL", (crossing,)
         ):
+            if window_start and r["scraped_at"] < window_start:
+                continue
             cells[_bucket(r["scraped_at"], h)].append(r["trucks_exit_min"])
     return {b: statistics.fmean(v) for b, v in cells.items()}
 
@@ -57,6 +61,22 @@ def _corr(a: dict, b: dict):
     if len(common) < 3:
         return None, len(common)
     return pearson([a[k] for k in common], [b[k] for k in common]), len(common)
+
+
+def _corr_diff(a: dict, b: dict):
+    """Pearson of FIRST DIFFERENCES over the buckets a and b share (sorted).
+
+    Levels correlations on highly persistent (autocorrelated) queue series
+    overstate evidential weight — two slow-moving series drift together almost
+    by construction. The differenced correlation asks the harder question: do the
+    hour-to-hour *changes* move together? It is the version of the corroboration
+    claim that survives the persistence objection. Returns (corr, n_diff_pairs)."""
+    common = sorted(set(a) & set(b))
+    if len(common) < 4:
+        return None, max(0, len(common) - 1)
+    da = [a[common[i]] - a[common[i - 1]] for i in range(1, len(common))]
+    db = [b[common[i]] - b[common[i - 1]] for i in range(1, len(common))]
+    return pearson(da, db), len(da)
 
 
 def _verdict(r_cb, r_ca) -> str:
@@ -76,29 +96,38 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bucket-hours", type=float, default=1.0)
+    ap.add_argument("--window-start", default=DEFAULT_WINDOW_START,
+                    help=f"ISO floor (default {DEFAULT_WINDOW_START}, the post-INC-003 "
+                         "clean window; pass '' for full history incl. the blackout stub)")
     a = ap.parse_args()
     h = a.bucket_hours
+    ws = a.window_start or None
 
     print("DPSU direction validation (READ-ONLY)")
-    print(f"  bucket={h}h  C=DPSU(UA->PL phys)  B=eCherga(UA->PL virt)  "
-          f"A=granica(PL->UA phys)")
+    print(f"  bucket={h}h  window-start={ws or 'ALL'}  C=DPSU(UA->PL phys, native)  "
+          f"B=eCherga(UA->PL virt, paused INCLUDED)  A=granica(PL->UA phys)")
     print(f"  expectation: r(C,B) positive AND >= |r(C,A)|; large DPSU truck "
-          f"counts corroborate the westbound (UA->PL) backlog.\n")
+          f"counts corroborate the westbound (UA->PL) backlog.")
+    print(f"  r_lvl = levels; r_diff = first differences (survives the persistence "
+          f"objection — see docstring / METHODOLOGY).\n")
 
-    hdr = (f"{'crossing':<12} {'med_trucks':>10} {'r(C,B) same':>12} {'n':>4} "
-           f"{'r(C,A) opp':>12} {'n':>4}  verdict")
+    hdr = (f"{'crossing':<12} {'med_trk':>8} {'r(C,B)lvl':>10} {'r(C,B)dif':>10} "
+           f"{'n':>4} {'r(C,A)lvl':>10} {'r(C,A)dif':>10} {'n':>4}  verdict")
     print(hdr)
     print("-" * len(hdr))
 
     flagged, supported, thin = [], [], []
     for crossing in sorted(CANONICAL_NAMES):
-        dpsu = load_dpsu(crossing, h)
-        ech = load_echerha(crossing, h)
-        gran = load_granica(crossing, h)
+        # C-vs-B is a COUNT comparison -> paused sub-queues INCLUDED (see loader).
+        dpsu = load_dpsu(crossing, h, window_start=ws)
+        ech = load_echerha(crossing, h, window_start=ws, include_paused=True)
+        gran = load_granica(crossing, h, window_start=ws)
 
         med = statistics.median(dpsu.values()) if dpsu else float("nan")
         r_cb, n_cb = _corr(dpsu, ech)
+        rd_cb, _ = _corr_diff(dpsu, ech)
         r_ca, n_ca = _corr(dpsu, gran)
+        rd_ca, _ = _corr_diff(dpsu, gran)
         verdict = _verdict(r_cb, r_ca)
 
         if verdict.startswith("⚠"):
@@ -109,21 +138,21 @@ def main() -> None:
             thin.append(crossing)
 
         def f(x):
-            return "   n/a" if x is None else f"{x:>+.3f}"
+            return "     n/a" if x is None else f"{x:>+.3f}"
 
-        print(f"{crossing:<12} {med:>10.0f} {f(r_cb):>12} {n_cb:>4} "
-              f"{f(r_ca):>12} {n_ca:>4}  {verdict}")
+        print(f"{crossing:<12} {med:>8.0f} {f(r_cb):>10} {f(rd_cb):>10} {n_cb:>4} "
+              f"{f(r_ca):>10} {f(rd_ca):>10} {n_ca:>4}  {verdict}")
 
     print()
     print("Magnitude sanity: a westbound (UA->PL) exit backlog reaches thousands "
-          "of trucks (recon: ~2,251 at Dorohusk). Large med_trucks corroborates "
+          "of trucks (recon: ~2,251 at Dorohusk). Large med_trk corroborates "
           "the direction; small counts everywhere would be a warning.")
     print(f"\nSummary: {len(supported)} supported, {len(flagged)} FLAGGED, "
           f"{len(thin)} too thin to judge.")
     if flagged:
         print(f"  ⚠ investigate (possible wrong direction): {sorted(flagged)}")
-    print("\nNote: correlations are thin while the loggers' overlap is short. "
-          "Re-run as data accumulates before drawing conclusions.")
+    print("\nNote: levels correlations on persistent series overstate evidence; "
+          "the r_diff column is the version that survives that objection.")
 
 
 if __name__ == "__main__":
