@@ -1,0 +1,10 @@
+id,scraped_at,crossing_id,crossing_name,trucks_exit_min,trucks_entry_min,cars_exit_min,cars_entry_min,buses_exit_min,buses_entry_min,data_timestamp,source_hour
+7631,2026-10-01T05:09:00Z,budomierz,Budomierz,180,,0,,60,,2026-10-1,5
+7629,2026-10-01T05:09:00Z,dolhobyczow,Dołhobyczów,180,,0,,0,,2026-10-1,5
+7627,2026-10-01T05:09:00Z,dorohusk,Dorohusk,480,,,,120,,2026-10-1,5
+7630,2026-10-01T05:09:00Z,hrebenne,Hrebenne,1080,,0,,0,,2026-10-1,5
+7632,2026-10-01T05:09:00Z,korczowa,Korczowa,540,,0,,120,,2026-10-1,5
+7635,2026-10-01T05:09:00Z,kroscienko,Krościenko,0,,0,,0,,2026-10-1,5
+7634,2026-10-01T05:09:00Z,malhowice,Małhowice,,,0,,0,,2026-10-1,5
+7633,2026-10-01T05:09:00Z,medyka,Medyka,900,,0,,60,,2026-10-1,5
+7628,2026-10-01T05:09:00Z,zosin,Zosin,180,,0,,0,,2026-10-1,5
