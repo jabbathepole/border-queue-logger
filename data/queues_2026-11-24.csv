@@ -1,0 +1,10 @@
+id,scraped_at,crossing_id,crossing_name,trucks_exit_min,trucks_entry_min,cars_exit_min,cars_entry_min,buses_exit_min,buses_entry_min,data_timestamp,source_hour
+9231,2026-11-24T02:03:00Z,budomierz,Budomierz,60,,0,,0,,2026-11-24,2
+9229,2026-11-24T02:03:00Z,dolhobyczow,Dołhobyczów,0,,0,,0,,2026-11-24,2
+9227,2026-11-24T02:03:00Z,dorohusk,Dorohusk,180,,,,,,2026-11-24,2
+9230,2026-11-24T02:03:00Z,hrebenne,Hrebenne,660,,0,,0,,2026-11-24,2
+9232,2026-11-24T02:03:00Z,korczowa,Korczowa,840,,0,,60,,2026-11-24,2
+9235,2026-11-24T02:03:00Z,kroscienko,Krościenko,60,,0,,0,,2026-11-24,2
+9234,2026-11-24T02:03:00Z,malhowice,Małhowice,,,0,,0,,2026-11-24,2
+9233,2026-11-24T02:03:00Z,medyka,Medyka,600,,120,,0,,2026-11-24,2
+9228,2026-11-24T02:03:00Z,zosin,Zosin,120,,0,,0,,2026-11-24,2
